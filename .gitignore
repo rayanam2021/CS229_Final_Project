@@ -1,0 +1,15 @@
+# Ignore Python-generated files and directories starting with __*
+__*/
+
+# Other common Python-related ignores
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.env
+*.venv
+*.egg
+*.egg-info/
+dist/
+build/
+*.log

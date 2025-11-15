@@ -11,7 +11,7 @@ from camera.camera_observations import VoxelGrid, GroundTruthRSO, calculate_entr
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime
-from mcts.mcts_controller_full_tree import MCTSController
+from mcts.mcts_controller import MCTSController
 from roe.propagation import propagateGeomROE, rtn_to_roe
 from roe.dynamics import apply_impulsive_dv
 import imageio
@@ -178,9 +178,9 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0, ve
         print(f"Best path found:")
         print(f"   First action (to execute): {np.round(action, 4)} m/s")
         print(f"   Root value: {predicted_value:.6f}")
-        print(f"   Full path length: {len(best_path)} actions")
-        if len(best_path) > 1:
-            print(f"   Full path (first 3): {[np.round(a, 4) for a in best_path[:min(3, len(best_path))]]}")
+        # print(f"   Full path length: {len(best_path)} actions")
+        # if len(best_path) > 1:
+        #     print(f"   Full path (first 3): {[np.round(a, 4) for a in best_path[:min(3, len(best_path))]]}")
 
         # 2. Execute ONLY the first action (one step of the plan)
         print(f"\nExecuting first action of optimal path...")
