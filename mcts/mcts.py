@@ -6,31 +6,26 @@ class Node:
         self.state = state
         self.parent = parent
 
-        # Action that led here (np.array) and its index in the parent's action list
-        self.action_index = action_index
-        self.action = None
-        self.actions = list(actions)  # list of np arrays
+        self.action = None                  # Action that led here (np.array)
+        self.action_index = action_index    # index of action that led here in the parent's action list
+        self.actions = list(actions)
         if action_index is not None:
             # parent's action list index; the actual vector is stored here just for convenience
             self.action = self.actions[action_index] if 0 <= action_index < len(self.actions) else None
 
         # Children and expansion tracking
-        self.children = []  # list[Node]
+        self.children = []
         self.untried_action_indices = list(range(len(self.actions)))  # indices of actions not expanded yet
 
-        # Statistics for UCB and value estimates
+        # Statistics for UCB1 and value estimates
         num_actions = len(self.actions)
         self.N = 0                          # visits to this state
         self.Q_sa = np.zeros(num_actions)   # mean return per action index
         self.N_sa = np.zeros(num_actions, dtype=int)  # visits per action index
 
-    def __repr__(self):
-        return f"Node(N={self.N}, num_children={len(self.children)})"
-
-
 class MCTS:
     def __init__(self, model, iters=1000, max_depth=5, c=1.4, gamma=1.0):
-        self.max_iterations = iters
+        self.max_path_searches = iters
         self.max_depth = max_depth
         self.c = c
         self.gamma = gamma
@@ -40,12 +35,12 @@ class MCTS:
         root_actions = self.mdp.actions(root_state)
         root = Node(root_state, actions=root_actions, action_index=None, parent=None)
 
-        for _ in range(self.max_iterations):
+        for _ in range(self.max_path_searches):
             self._search(root, depth=0)
 
         # Best action at root = argmax Q_sa over actions
         if len(root.actions) == 0:
-            # No available actions → return zero action and value 0
+            # No available actions
             return np.zeros(3), 0.0
 
         best_idx = int(np.argmax(root.Q_sa))
@@ -53,14 +48,11 @@ class MCTS:
         best_value = float(root.Q_sa[best_idx])
         return best_action, best_value
 
-    def _select_ucb_action_index(self, node):
+    def _select_ucb1_action_index(self, node):
         total_N = node.N
-        # Avoid division by zero; but by design, this should not be called
-        # unless all actions have N_sa[i] > 0.
-        ucb_values = node.Q_sa + self.c * np.sqrt(
-            np.log(total_N) / np.maximum(node.N_sa, 1)
-        )
-        return int(np.argmax(ucb_values))
+        # should not be called unless all actions have N_sa[i] > 0.
+        ucb1_sa = node.Q_sa + self.c * np.sqrt(np.log(total_N) / np.maximum(node.N_sa, 1))
+        return int(np.argmax(ucb1_sa))
 
     def _expand(self, node, action_index):
         action = node.actions[action_index]
@@ -119,25 +111,26 @@ class MCTS:
             current = current.parent
 
     def _search(self, node, depth):
-        # 1) Global depth limit: treat as horizon state (value 0)
+        # Max depth reached. Backpropagate and return 0 value
         if depth == self.max_depth:
             value = 0.0
             self._backpropagate(node, value)
             return value
 
-        # 2) Expansion: if we still have untried actions at this node, expand one
+        # Expansion: if we still have untried actions at this node, expand one (inf bonus in ucb1)
         if node.untried_action_indices:
             a_idx = node.untried_action_indices.pop()
             child = self._expand(node, a_idx)
 
-            # We moved one step deeper in the tree → rollout starts at depth+1
+            # We moved one step deeper in the tree. Rollout from depth+1 (child)
             value = self._rollout(child.state, depth + 1)
             self._backpropagate(child, value)
             return value
 
-        # 3) Node is fully expanded and has children → select via UCB and recurse
+        # Node is fully expanded (no actiones left to try) and has children, select
+        # best action via UCB1 to keep building the tree
         if node.children:
-            a_idx = self._select_ucb_action_index(node)
+            a_idx = self._select_ucb1_action_index(node)
 
             # Find child corresponding to this action index
             # (there should be exactly one)
@@ -147,15 +140,9 @@ class MCTS:
                     child = ch
                     break
 
-            if child is None:
-                # Fallback: shouldn't happen, but avoid crashing
-                value = self._rollout(node.state, depth)
-                self._backpropagate(node, value)
-                return value
-
             return self._search(child, depth + 1)
 
-        # 4) No actions available (terminal state) → rollout returns 0
+        # No children and no untried actions: no actions here (terminal), return 0 as terminal value.
         value = 0.0
         self._backpropagate(node, value)
         return value
