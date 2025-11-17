@@ -5,7 +5,7 @@ from datetime import datetime
 if __name__ == "__main__":
     # You can set parameters here, or use defaults from scenario_full_mcts.py
     
-    MAX_HORIZON = 1000
+    MAX_HORIZON = 10
     NUM_STEPS = 20
     TIME_STEP = 30.0  # seconds
     VERBOSE = True
