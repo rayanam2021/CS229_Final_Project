@@ -2,7 +2,7 @@ import numpy as np
 
 
 class Node:
-    def __init__(self, state, actions, action_index=None, parent=None):
+    def __init__(self, state, actions, reward=0.0, action_index=None, parent=None):
         self.state = state
         self.parent = parent
 
@@ -22,6 +22,8 @@ class Node:
         self.N = 0                          # visits to this state
         self.Q_sa = np.zeros(num_actions)   # mean return per action index
         self.N_sa = np.zeros(num_actions, dtype=int)  # visits per action index
+
+        self.reward = reward  # reward for getting to this node
 
 class MCTS:
     def __init__(self, model, iters=1000, max_depth=5, c=1.4, gamma=1.0):
@@ -56,16 +58,19 @@ class MCTS:
 
     def _expand(self, node, action_index):
         action = node.actions[action_index]
-        next_state, _ = self.mdp.step(node.state, action)
+        next_state, reward = self.mdp.step(node.state, action)
         next_actions = self.mdp.actions(next_state)
 
         child = Node(
             state=next_state,
             actions=next_actions,
+            reward=reward,
             action_index=action_index,
             parent=node,
         )
+
         node.children.append(child)
+
         return child
 
     def _rollout(self, state, depth):
@@ -97,8 +102,8 @@ class MCTS:
             current.N += 1
 
             if current.parent is not None and current.action_index is not None:
-                # Apply one step of discount going up the tree
-                G = self.gamma * G
+                # Bellman: r + gamma * G_child
+                G = current.reward + self.gamma * G
 
                 a_idx = current.action_index
                 parent = current.parent

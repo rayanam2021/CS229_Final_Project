@@ -61,7 +61,7 @@ class MCTSController:
                     max_depth=horizon,
                 )
 
-        self.mcts = MCTS(model=self.model, iters=2000, max_depth=horizon)
+        self.mcts = MCTS(model=self.model, iters=1, max_depth=horizon)
 
     def select_action(self, state, time, tspan, grid, rso, camera_fn, verbose=False, out_folder=None):
 
