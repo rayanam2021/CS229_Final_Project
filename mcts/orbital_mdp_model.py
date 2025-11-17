@@ -35,7 +35,7 @@ class OrbitalMCTSModel:
             for mag in [delta_v_small, delta_v_large]:
                 e = np.zeros(3)
                 e[axis] = mag
-                actions.append( e.copy() )
+                actions.append( e.copy())
                 actions.append(-e.copy())
         return actions
 
