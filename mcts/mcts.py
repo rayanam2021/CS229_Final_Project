@@ -1,8 +1,13 @@
 import numpy as np
+import itertools
+import os
 
+from graphviz import Digraph
 
 class Node:
+    _ids = itertools.count()
     def __init__(self, state, actions, reward=0.0, action_index=None, parent=None):
+        self.id = next(Node._ids)
         self.state = state
         self.parent = parent
 
@@ -33,7 +38,7 @@ class MCTS:
         self.gamma = gamma
         self.mdp = model
 
-    def get_best_root_action(self, root_state):
+    def get_best_root_action(self, root_state, step, out_folder):
         root_actions = self.mdp.actions(root_state)
         root = Node(root_state, actions=root_actions, action_index=None, parent=None)
 
@@ -48,6 +53,9 @@ class MCTS:
         best_idx = int(np.argmax(root.Q_sa))
         best_action = root.actions[best_idx]
         best_value = float(root.Q_sa[best_idx])
+
+        self.export_tree_to_dot(root, step, out_folder)
+
         return best_action, best_value
 
     def _select_ucb1_action_index(self, node):
@@ -151,3 +159,28 @@ class MCTS:
         value = 0.0
         self._backpropagate(node, value)
         return value
+
+    def export_tree_to_dot(self, root, step, output_path):
+        dot = Digraph()
+
+        def add(node):
+            label = f"ID={node.id}\nN={node.N}"
+            dot.node(str(node.id), label)
+
+            for child in node.children:
+                qs = ", ".join([f"{q:.2f}" for q in node.Q_sa])
+                edge_label = (
+                    f"a={child.action_index}\n"
+                    f"r={child.reward:.2f}\n"   # immediate rewards returned by model at that step
+                    f"Q={node.Q_sa[child.action_index]:.2f}"
+                )
+                dot.edge(str(node.id), str(child.id), edge_label)
+                add(child)
+
+        add(root)
+        
+        out_dir = os.path.join(output_path,"trees")
+        os.makedirs(out_dir, exist_ok=True)
+        filename = "step"+str(step)
+
+        dot.render(filename=filename, directory=out_dir,format='png', cleanup=True)

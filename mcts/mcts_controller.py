@@ -63,7 +63,7 @@ class MCTSController:
 
         self.mcts = MCTS(model=self.model, iters=3000, max_depth=horizon)
 
-    def select_action(self, state, time, tspan, grid, rso, camera_fn, verbose=False, out_folder=None):
+    def select_action(self, state, time, tspan, grid, rso, camera_fn, step=0, verbose=False, out_folder=None):
 
         # Update the model with current environment objects
         self.model.rso = rso
@@ -73,7 +73,7 @@ class MCTSController:
         # Wrap ROEs + belief into an OrbitalState for MCTS
         root_state = OrbitalState(roe=state.copy(), grid=grid)
 
-        best_action, value = self.mcts.get_best_root_action(root_state)
+        best_action, value = self.mcts.get_best_root_action(root_state, step, out_folder)
 
         return best_action, value, [best_action]
     
