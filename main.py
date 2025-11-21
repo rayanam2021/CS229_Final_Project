@@ -1,19 +1,22 @@
 import json
 import os
+import dataclasses
 
 from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
 from datetime import datetime
 
 def load_config(path="config.json"):
     with open(path, "r") as f:
-        return json.load(f)
+        cfg = json.load(f)
+        cfg["timestamp"] = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")     # just to know when analyzing results
+
+        return cfg
 
 if __name__ == "__main__":
     # You can set parameters here, or use defaults from scenario_full_mcts.py
     cfg = load_config("config.json")
     
-    timestamp = cfg.get("run_id", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-    OUT_FOLDER = os.path.join("output", timestamp)
+    OUT_FOLDER = os.path.join("output", cfg.get("run_id"))#, cfg.get("timestamp"))
     os.makedirs(OUT_FOLDER, exist_ok=True)
 
     run_orbital_camera_sim_full_mcts(

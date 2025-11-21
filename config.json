@@ -1,0 +1,13 @@
+{
+  "run_id": "1",
+  "num_steps": 1,
+  "time_step": 30.0,
+  "seed": 123,
+
+  "horizon": 1,
+  "mcts_iters": 3000,
+  "mcts_c": 1.4,
+  "gamma": 0.99,
+  
+  "lambda_dv": 0.01
+}
