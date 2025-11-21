@@ -90,7 +90,7 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
 
 
 def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
-                                     mcts_iters=1, mcts_c=1.4, mcts_gamma=0.99,
+                                     mcts_iters=1, mcts_c=1.4, mcts_gamma=0.99, lambda_dv=0.01,
                                      verbose=False, visualize=True, out_folder=None):
     """
     High-level simulation combining:
@@ -144,7 +144,7 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
         mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
         time_step=time_step,
         horizon=horizon,
-        branching_factor=13,
+        lambda_dv=lambda_dv,
         num_workers=None,
         mcts_iters=mcts_iters,
         mcts_c=mcts_c,
@@ -246,7 +246,7 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
             root_stats=stats,
             predicted_value=stats.get("predicted_value", None),
         )
-        
+
         # 6. Move to next step
         state = next_state_propagated # Use the fully propagated state
         time += time_step

@@ -32,6 +32,7 @@ if __name__ == "__main__":
         mcts_gamma   = cfg.get("gamma", 1.4),
         verbose      = cfg.get("verbose", True),
         visualize    = cfg.get("visualize", True),
+        lambda_dv    = cfg.get("lambda_dv", True),
         out_folder   = OUT_FOLDER
     )
 

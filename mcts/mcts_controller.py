@@ -27,8 +27,8 @@ from mcts.mcts import MCTS
 class MCTSController:
     
     def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-                 time_step, horizon, branching_factor,
-                 num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
+                 time_step, horizon,
+                 lambda_dv, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
         """
         Args:
             mu_earth: Gravitational parameter
@@ -38,7 +38,6 @@ class MCTSController:
             omega_chief: Chief argument of perigee
             time_step: Time step duration (seconds)
             horizon: Tree depth (number of decision levels)
-            branching_factor: Number of actions per node (typically 13)
             num_workers: Number of parallel workers (None = use all CPU cores)
         """
         self.mu_earth = mu_earth
@@ -49,16 +48,15 @@ class MCTSController:
         self.n_chief = n_chief
         self.time_step = time_step
         self.horizon = horizon
-        self.branching_factor = branching_factor
         self.num_workers = num_workers or max(1, cpu_count() - 1)
         self.replay_buffer = []
-        self.lambda_dv = 0
+        self.lambda_dv = lambda_dv
 
         self.model = OrbitalMCTSModel(
                     a_chief, e_chief, i_chief, omega_chief, n_chief,
                     rso=None, camera_fn=None,
                     grid_dims=None,
-                    lambda_dv=0.0,
+                    lambda_dv=lambda_dv,
                     time_step=time_step,
                     max_depth=horizon,
                 )

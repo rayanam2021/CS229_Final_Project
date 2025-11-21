@@ -47,6 +47,7 @@ class MCTS:
 
         # Best action at root = argmax Q_sa over actions
         if len(root.actions) == 0:
+            # No available actions
             return np.zeros(3), 0.0
 
         best_idx = int(np.argmax(root.Q_sa))
@@ -55,7 +56,7 @@ class MCTS:
 
         if return_stats:
             if step in (0, 5, 10, 19):
-                self.export_tree_to_dot(root, step, out_folder)
+                self._export_tree_to_dot(root, step, out_folder)
             stats = {
                 "root_N": int(root.N),
                 "root_Q_sa": root.Q_sa.copy(),
@@ -170,7 +171,7 @@ class MCTS:
         self._backpropagate(node, value)
         return value
 
-    def export_tree_to_dot(self, root, step, output_path):
+    def _export_tree_to_dot(self, root, step, output_path):
         dot = Digraph()
 
         def add(node):
