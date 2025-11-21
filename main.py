@@ -1,6 +1,5 @@
 import json
 import os
-import dataclasses
 import numpy as np
 
 from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts

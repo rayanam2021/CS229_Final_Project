@@ -1,0 +1,11 @@
+{
+  "run_id": "c_2.0_seed_1",
+  "mcts_iters": 1000,
+  "mcts_c": 2.0,
+  "gamma": 0.95,
+  "horizon": 15,
+  "lambda_dv": 0.01,
+  "num_steps": 20,
+  "time_step": 30.0,
+  "seed": 1
+}
