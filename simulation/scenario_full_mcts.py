@@ -184,7 +184,7 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
 
         # 1. MCTS decision (build full tree and select best action)
         print("Building full MCTS tree ...")
-        action, predicted_value, best_path = controller.select_action(state, time, tspan, grid, rso, camera_fn, step, verbose=verbose, out_folder=out_folder)
+        action, predicted_value, stats = controller.select_action(state, time, tspan, grid, rso, camera_fn, step, verbose=verbose, out_folder=out_folder)
         
         print(f"Best path found:")
         print(f"   First action (to execute): {np.round(action, 4)} m/s")
@@ -230,8 +230,23 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
         # 5. Record transition
         # We record the state *before* the action (state) and the
         # state *after* both the action and propagation (next_state_propagated)
-        controller.record_transition(time, state, action, actual_reward, next_state_propagated)
+        info_gain = entropy_reduction
 
+        controller.record_transition(
+            t=time,
+            state=state,
+            action=action,
+            reward=actual_reward,
+            next_state=next_state_propagated,
+            entropy_before=entropy_before,
+            entropy_after=entropy_after,
+            info_gain=info_gain,
+            dv_cost=dv_cost,
+            step_idx=step,
+            root_stats=stats,
+            predicted_value=stats.get("predicted_value", None),
+        )
+        
         # 6. Move to next step
         state = next_state_propagated # Use the fully propagated state
         time += time_step

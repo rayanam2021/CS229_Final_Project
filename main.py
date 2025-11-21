@@ -1,6 +1,7 @@
 import json
 import os
 import dataclasses
+import numpy as np
 
 from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
 from datetime import datetime
@@ -15,6 +16,9 @@ def load_config(path="config.json"):
 if __name__ == "__main__":
     # You can set parameters here, or use defaults from scenario_full_mcts.py
     cfg = load_config("config.json")
+
+    if "seed" in cfg:
+        np.random.seed(cfg["seed"])
     
     OUT_FOLDER = os.path.join("output", cfg.get("run_id"))#, cfg.get("timestamp"))
     os.makedirs(OUT_FOLDER, exist_ok=True)

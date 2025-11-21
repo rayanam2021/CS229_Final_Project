@@ -81,28 +81,61 @@ class MCTSController:
         # Wrap ROEs + belief into an OrbitalState for MCTS
         root_state = OrbitalState(roe=state.copy(), grid=grid)
 
-        best_action, value = self.mcts.get_best_root_action(root_state, step, out_folder)
+        best_action, value, root_stats = self.mcts.get_best_root_action(root_state, step, out_folder, return_stats=True)
 
-        return best_action, value, [best_action]
+        return best_action, value, root_stats
     
-    def record_transition(self, t, state, action, reward, next_state):
+    def record_transition(self, t, state, action, reward, next_state, entropy_before=None, entropy_after=None,
+                          info_gain=None, dv_cost=None, step_idx=None, root_stats=None, predicted_value=None):
         """
-        Store (s, a, r, s') to replay buffer.
-        
+        Store one transition + diagnostics in the replay buffer.
+
         Args:
-            t: Time of transition
-            state: Initial state (6D ROE)
-            action: Action taken (3D ΔV)
-            reward: Reward received
-            next_state: Resulting state (6D ROE)
+            t:         Time of transition (float)
+            state:     ROE before action (6,)
+            action:    Δv in RTN (3,)
+            reward:    Actual reward used in sim
+            next_state:ROE after action + propagation (6,)
+            entropy_before/after: grid entropies
+            info_gain: entropy_before - entropy_after
+            dv_cost:   ||Δv||
+            step_idx:  integer step index
+            root_stats:dict from MCTS.get_best_root_action
+            predicted_value: MCTS root value estimate
         """
-        self.replay_buffer.append({
-            "time": t,
+        entry = {
+            "time": float(t),
+            "step": int(step_idx) if step_idx is not None else None,
             "state": state.tolist(),
             "action": action.tolist(),
             "reward": float(reward),
-            "next_state": next_state,
-        })
+            "next_state": next_state.tolist(),
+        }
+
+        if entropy_before is not None:
+            entry["entropy_before"] = float(entropy_before)
+        if entropy_after is not None:
+            entry["entropy_after"] = float(entropy_after)
+        if info_gain is not None:
+            entry["info_gain"] = float(info_gain)
+        if dv_cost is not None:
+            entry["dv_cost"] = float(dv_cost)
+        if predicted_value is not None:
+            entry["predicted_value"] = float(predicted_value)
+
+        if root_stats is not None:
+            entry["root_N"] = int(root_stats.get("root_N", 0))
+            entry["root_best_idx"] = int(root_stats.get("best_idx", -1))
+
+            q_sa = root_stats.get("root_Q_sa", None)
+            n_sa = root_stats.get("root_N_sa", None)
+            if q_sa is not None:
+                entry["root_Q_sa"] = np.asarray(q_sa).tolist()
+            if n_sa is not None:
+                entry["root_N_sa"] = np.asarray(n_sa).tolist()
+
+        self.replay_buffer.append(entry)
+
     
     def save_replay_buffer(self, base_dir="output"):
         """
