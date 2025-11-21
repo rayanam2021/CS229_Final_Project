@@ -26,7 +26,9 @@ from mcts.mcts import MCTS
 
 class MCTSController:
     
-    def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief, time_step=30.0, horizon=3, branching_factor=13, num_workers=None):
+    def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+                 time_step, horizon, branching_factor,
+                 num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
         """
         Args:
             mu_earth: Gravitational parameter
@@ -61,7 +63,13 @@ class MCTSController:
                     max_depth=horizon,
                 )
 
-        self.mcts = MCTS(model=self.model, iters=3000, max_depth=horizon)
+        self.mcts = MCTS(
+            model=self.model,
+            iters=mcts_iters,
+            max_depth=horizon,
+            c=mcts_c,
+            gamma=gamma,
+        )
 
     def select_action(self, state, time, tspan, grid, rso, camera_fn, step=0, verbose=False, out_folder=None):
 

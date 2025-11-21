@@ -89,7 +89,9 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
     return frames
 
 
-def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0, verbose=False, visualize=True, out_folder=None):
+def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
+                                     mcts_iters=1, mcts_c=1.4, mcts_gamma=0.99,
+                                     verbose=False, visualize=True, out_folder=None):
     """
     High-level simulation combining:
     - Full MCTS tree search (configurable horizon)
@@ -138,7 +140,16 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0, ve
     rso = GroundTruthRSO(grid)
     
     # --- Create full MCTS controller ---
-    controller = MCTSController(mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief, time_step=time_step, horizon=horizon, branching_factor=13, num_workers=None)
+    controller = MCTSController(
+        mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+        time_step=time_step,
+        horizon=horizon,
+        branching_factor=13,
+        num_workers=None,
+        mcts_iters=mcts_iters,
+        mcts_c=mcts_c,
+        gamma=mcts_gamma
+    )
 
     # --- Initialize state ---
     initial_state = np.array([0.0, 0.0, 0.0, 0.0002, 0.0, 0.0])
@@ -173,7 +184,7 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0, ve
 
         # 1. MCTS decision (build full tree and select best action)
         print("Building full MCTS tree ...")
-        action, predicted_value, best_path = controller.select_action(state, time, tspan, grid, rso, camera_fn, verbose=verbose, out_folder=out_folder)
+        action, predicted_value, best_path = controller.select_action(state, time, tspan, grid, rso, camera_fn, step, verbose=verbose, out_folder=out_folder)
         
         print(f"Best path found:")
         print(f"   First action (to execute): {np.round(action, 4)} m/s")
