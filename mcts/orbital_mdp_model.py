@@ -12,6 +12,7 @@ class OrbitalState:
 class OrbitalMCTSModel:
     def __init__(self, a_chief, e_chief, i_chief, omega_chief, n_chief,
                  rso, camera_fn, grid_dims, lambda_dv, time_step, max_depth,
+                 target_radius, gamma_r, r_min_rollout, r_max_rollout,
                  alpha_dv=10, beta_tan=0.5, grid=None):
 
         self.a_chief = a_chief
@@ -30,6 +31,10 @@ class OrbitalMCTSModel:
 
         self.alpha_dv = alpha_dv
         self.beta_tan = beta_tan
+        self.target_radius=target_radius
+        self.gamma_r=gamma_r
+        self.r_min_rollout=r_min_rollout
+        self.r_max_rollout=r_max_rollout
 
     def actions(self, state):
         delta_v_small = 0.01
@@ -95,24 +100,99 @@ class OrbitalMCTSModel:
     #     return actions[idx]
 
     def rollout_policy(self, state):
+        """
+        Heuristic rollout policy:
+        - Prefer smaller |dv|
+        - Prefer tangential/normal actions (parallax)
+        - Prefer radius near target_radius
+        - Reject actions that push radius outside [r_min_rollout, r_max_rollout]
+        """
+
         actions = self.actions(state)
+
+        # we will potentially filter some actions out for rollouts
         scores = []
+        valid_actions = []
+
+        # time span for a single rollout step radius check
+        tspan_impulse = np.array([0.0])
+        tspan_prop = np.array([self.time_step])
 
         for a in actions:
             dv_norm = np.linalg.norm(a)
 
-            # base penalty from |dv|
+            # base score from |dv| (Boltzmann: exp(-alpha_dv * |dv|))
             s = -self.alpha_dv * dv_norm
 
-            # simple classification: axis 0 = radial; axes 1,2 = tangential/normal
-            if np.argmax(np.abs(a)) in (1, 2) and dv_norm > 0:
-                s += self.beta_tan  # parallax-friendly
+            # tangential / normal bonus: axis 0 = radial, 1/2 = tangential/normal
+            if dv_norm > 0:
+                main_axis = int(np.argmax(np.abs(a)))
+                if main_axis in (1, 2):
+                    s += self.beta_tan
 
+            # --- radius-based term: estimate child radius with 1-step propagation ---
+            # Start from current ROE, apply impulsive dv, propagate for one time_step
+            # state.roe is assumed to be the current ROE vector
+            roe_child = apply_impulsive_dv(
+                state.roe,
+                a,
+                self.a_chief,
+                self.n_chief,
+                tspan_impulse
+            )
+
+            rho_rtn_child, _ = propagateGeomROE(
+                roe_child,
+                self.a_chief,
+                self.e_chief,
+                self.i_chief,
+                self.omega_chief,
+                self.n_chief,
+                tspan_prop
+            )
+
+            # rho_rtn_child is in km; convert to meters and take last column
+            if rho_rtn_child.ndim == 2:
+                pos_child = rho_rtn_child[:, -1] * 1000.0
+            else:
+                pos_child = rho_rtn_child * 1000.0
+
+            radius = float(np.linalg.norm(pos_child))
+
+            # rollout-only radius guardrails
+            if (radius < self.r_min_rollout) or (radius > self.r_max_rollout):
+                # skip this action in rollouts
+                continue
+
+            # penalize deviation from target radius
+            s -= self.gamma_r * abs(radius - self.target_radius)
+
+            valid_actions.append(a)
             scores.append(s)
 
-        scores = np.array(scores)
-        exp_scores = np.exp(scores - scores.max())  # numerical stability
-        probs = exp_scores / exp_scores.sum()
+        # if everything got filtered out (should be rare), fall back to simple |dv| heuristic
+        if not valid_actions:
+            scores = []
+            for a in actions:
+                dv_norm = np.linalg.norm(a)
+                s = -self.alpha_dv * dv_norm
+                if dv_norm > 0:
+                    main_axis = int(np.argmax(np.abs(a)))
+                    if main_axis in (1, 2):
+                        s += self.beta_tan
+                scores.append(s)
+            scores = np.array(scores)
+            scores -= scores.max()
+            probs = np.exp(scores)
+            probs /= probs.sum()
+            idx = np.random.choice(len(actions), p=probs)
+            return actions[idx]
 
-        idx = np.random.choice(len(actions), p=probs)
-        return actions[idx]
+        # softmax over scores for valid actions
+        scores = np.array(scores)
+        scores -= scores.max()
+        probs = np.exp(scores)
+        probs /= probs.sum()
+
+        idx = np.random.choice(len(valid_actions), p=probs)
+        return valid_actions[idx]

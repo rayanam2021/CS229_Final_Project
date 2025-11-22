@@ -27,7 +27,7 @@ from mcts.mcts import MCTS
 class MCTSController:
     
     def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-                 time_step, horizon, alpha_dv, beta_tan,
+                 time_step, horizon, alpha_dv, beta_tan, target_radius, gamma_r, r_min_rollout, r_max_rollout,
                  lambda_dv, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
         """
         Args:
@@ -60,7 +60,11 @@ class MCTSController:
                     time_step=time_step,
                     max_depth=horizon,
                     alpha_dv=alpha_dv,
-                    beta_tan=beta_tan
+                    beta_tan=beta_tan,
+                    target_radius=target_radius,
+                    gamma_r=gamma_r,
+                    r_min_rollout=r_min_rollout,
+                    r_max_rollout=r_max_rollout
                 )
 
         self.mcts = MCTS(
@@ -70,6 +74,7 @@ class MCTSController:
             c=mcts_c,
             gamma=gamma,
         )
+
 
     def select_action(self, state, time, tspan, grid, rso, camera_fn, step=0, verbose=False, out_folder=None):
 
