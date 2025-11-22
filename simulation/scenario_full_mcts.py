@@ -30,6 +30,9 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
     """
     print("\n🎬 Generating visualization frames for video export...")
     
+    camera_positions = np.asarray(camera_positions)
+    view_directions = np.asarray(view_directions)
+
     # 1. Initialize a new grid for visualization purposes only
     vis_grid = VoxelGrid(grid_dims=grid_initial.dims, voxel_size=grid_initial.voxel_size, origin=grid_initial.origin)
     
@@ -66,25 +69,42 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
     
     # 4. Loop through each frame, update belief (simulated observation), and capture
     for frame in range(len(camera_positions)):
-        
-        current_camera_pos = camera_positions[frame]
-        
-        # This updates the visualization grid's belief for the current frame
-        simulate_observation(vis_grid, rso, camera_fn, current_camera_pos) 
-        
-        # Update the plot artists for the current frame index
-        update_plot(frame, vis_grid, rso, camera_positions, view_directions, 
-                    camera_fn['fov_degrees'], camera_fn['sensor_res'], 
-                    camera_fn['noise_params'], ax, artists, np.array([0.0, 0.0, 0.0]))
-        
-        # Capture the frame
+        cam_hist = camera_positions[:frame + 1]
+        view_hist = view_directions[:frame + 1]
+        current_camera_pos = cam_hist[-1]
+
+        # update vis grid
+        simulate_observation(vis_grid, rso, camera_fn, current_camera_pos)
+
+        # update plot
+        update_plot(
+            frame,
+            vis_grid,
+            rso,
+            cam_hist,
+            view_hist,
+            camera_fn['fov_degrees'],
+            camera_fn['sensor_res'],
+            camera_fn['noise_params'],
+            ax,
+            artists,
+            np.array([0.0, 0.0, 0.0]),
+        )
+
+        # optional: make frame index visible in the title
+        ax.set_title(f"RSO Characterization - Frame {frame+1}/{len(camera_positions)}")
+
+        # --- KEY CHANGE: copy the image data ---
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
         rgba_buffer = np.asarray(renderer.buffer_rgba())
-        frame_image = rgba_buffer[:, :, :3]
+        frame_image = rgba_buffer[:, :, :3].copy()   # <-- COPY HERE
         frames.append(frame_image)
-        
+
     plt.close(fig) # Close the figure after generating all frames
+
+    print("np.may_share_memory(frames[0], frames[1]):",
+      np.may_share_memory(frames[0], frames[1]))
     
     return frames
 
@@ -147,7 +167,6 @@ def run_orbital_camera_sim_full_mcts(target_radius, gamma_r, r_min_rollout, r_ma
         time_step=time_step,
         horizon=horizon,
         lambda_dv=lambda_dv,
-        num_workers=None,
         mcts_iters=mcts_iters,
         mcts_c=mcts_c,
         gamma=mcts_gamma,
