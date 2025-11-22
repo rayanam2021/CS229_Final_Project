@@ -27,7 +27,7 @@ from mcts.mcts import MCTS
 class MCTSController:
     
     def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-                 time_step, horizon,
+                 time_step, horizon, alpha_dv, beta_tan,
                  lambda_dv, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
         """
         Args:
@@ -59,6 +59,8 @@ class MCTSController:
                     lambda_dv=lambda_dv,
                     time_step=time_step,
                     max_depth=horizon,
+                    alpha_dv=alpha_dv,
+                    beta_tan=beta_tan
                 )
 
         self.mcts = MCTS(

@@ -91,6 +91,7 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
 
 def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
                                      mcts_iters=1, mcts_c=1.4, mcts_gamma=0.99, lambda_dv=0.01,
+                                     alpha_dv=1, beta_tan=1,
                                      verbose=False, visualize=True, out_folder=None):
     """
     High-level simulation combining:
@@ -148,7 +149,9 @@ def run_orbital_camera_sim_full_mcts(horizon=5, num_steps=20, time_step=10.0,
         num_workers=None,
         mcts_iters=mcts_iters,
         mcts_c=mcts_c,
-        gamma=mcts_gamma
+        gamma=mcts_gamma,
+        alpha_dv=alpha_dv,
+        beta_tan=beta_tan
     )
 
     # --- Initialize state ---

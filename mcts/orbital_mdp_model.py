@@ -11,7 +11,8 @@ class OrbitalState:
 
 class OrbitalMCTSModel:
     def __init__(self, a_chief, e_chief, i_chief, omega_chief, n_chief,
-                 rso, camera_fn, grid_dims, lambda_dv, time_step, max_depth, grid=None):
+                 rso, camera_fn, grid_dims, lambda_dv, time_step, max_depth,
+                 alpha_dv=10, beta_tan=0.5, grid=None):
 
         self.a_chief = a_chief
         self.e_chief = e_chief
@@ -26,6 +27,9 @@ class OrbitalMCTSModel:
         self.lambda_dv = lambda_dv
         self.time_step = time_step
         self.max_depth = max_depth
+
+        self.alpha_dv = alpha_dv
+        self.beta_tan = beta_tan
 
     def actions(self, state):
         delta_v_small = 0.01
@@ -84,9 +88,31 @@ class OrbitalMCTSModel:
 
         return next_state, reward
 
+    # def rollout_policy(self, state):
+    #     actions = self.actions(state)
+    #     n = len(actions)
+    #     idx = np.random.randint(n)
+    #     return actions[idx]
+
     def rollout_policy(self, state):
         actions = self.actions(state)
-        n = len(actions)
-        idx = np.random.randint(n)
-        return actions[idx]
+        scores = []
 
+        for a in actions:
+            dv_norm = np.linalg.norm(a)
+
+            # base penalty from |dv|
+            s = -self.alpha_dv * dv_norm
+
+            # simple classification: axis 0 = radial; axes 1,2 = tangential/normal
+            if np.argmax(np.abs(a)) in (1, 2) and dv_norm > 0:
+                s += self.beta_tan  # parallax-friendly
+
+            scores.append(s)
+
+        scores = np.array(scores)
+        exp_scores = np.exp(scores - scores.max())  # numerical stability
+        probs = exp_scores / exp_scores.sum()
+
+        idx = np.random.choice(len(actions), p=probs)
+        return actions[idx]

@@ -26,6 +26,9 @@ if __name__ == "__main__":
                 "lambda_dv": 0.01,
                 "num_steps": 20,
                 "time_step": 30.0,
+
+                "alpha_dv":10,
+                "beta_tan":0.5,
                 "seed": seed,
             }
             with open(os.path.join(out_dir, f"config_{c}_{seed}.json"), "w") as f:
@@ -41,6 +44,8 @@ if __name__ == "__main__":
                 mcts_c       = config["mcts_c"],  # exploration constant
                 mcts_gamma   = config["gamma"],
                 lambda_dv    = config["lambda_dv"],
+                alpha_dv     = config["alpha_dv"],
+                beta_tan     = config["beta_tan"],
                 verbose      = True,
                 visualize    = True,
                 out_folder   = out_dir

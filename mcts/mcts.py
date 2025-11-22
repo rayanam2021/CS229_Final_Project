@@ -21,6 +21,7 @@ class Node:
         # Children and expansion tracking
         self.children = []
         self.untried_action_indices = list(range(len(self.actions)))  # indices of actions not expanded yet
+        np.random.shuffle(self.untried_action_indices)
 
         # Statistics for UCB1 and value estimates
         num_actions = len(self.actions)
