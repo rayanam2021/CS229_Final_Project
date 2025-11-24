@@ -75,9 +75,9 @@ class VoxelGrid:
         self.L_miss_update = logit(np.array(P_MISS_GIVEN_OCCUPIED)) - logit(np.array(P_MISS_GIVEN_EMPTY))
 
     def clone(self):
-        new = VoxelGrid(self.dims)
-        np.copyto(new.belief, self.belief)
-        np.copyto(new.log_odds, self.log_odds)
+        new = VoxelGrid(self.dims, self.voxel_size, tuple(self.origin))
+        new.belief = self.belief.copy()
+        new.log_odds = self.log_odds.copy()
         return new
 
     def get_entropy(self) -> float:
