@@ -37,7 +37,9 @@ if __name__ == "__main__":
         r_max_rollout = cfg.get("r_max_rollout"),
         verbose      = cfg.get("verbose", True),
         visualize    = cfg.get("visualize", True),
-        lambda_dv    = cfg.get("lambda_dv", True),
+        lambda_dv    = cfg.get("lambda_dv"),
+        use_torch_grid = cfg.get("use_torch_grid"),
+        grid_device    = cfg.get("grid_device"),
         out_folder   = OUT_FOLDER
     )
 

@@ -6,16 +6,18 @@ evaluating 13^3 = 2,197 distinct paths using parallel processing
 and selecting the optimal first action.
 """
 
-import numpy as np
-from camera.camera_observations import VoxelGrid, GroundTruthRSO, calculate_entropy, simulate_observation, plot_scenario, update_plot
-import matplotlib.pyplot as plt
 import os
-from datetime import datetime
-from mcts.mcts_controller import MCTSController
-from roe.propagation import propagateGeomROE, rtn_to_roe
-from roe.dynamics import apply_impulsive_dv
-import imageio
 import csv
+import imageio
+import time as tm
+import numpy as np
+import matplotlib.pyplot as plt
+
+from datetime import datetime
+from roe.dynamics import apply_impulsive_dv
+from roe.propagation import propagateGeomROE, rtn_to_roe
+from mcts.mcts_controller import MCTSController
+from camera.camera_observations import VoxelGrid, GroundTruthRSO, calculate_entropy, simulate_observation, plot_scenario, update_plot
 
 
 # --- FUNCTION FOR OFFLINE VISUALIZATION ---
@@ -113,7 +115,8 @@ def run_orbital_camera_sim_full_mcts(target_radius, gamma_r, r_min_rollout, r_ma
                                      horizon=5, num_steps=20, time_step=10.0,
                                      mcts_iters=1, mcts_c=1.4, mcts_gamma=0.99, lambda_dv=0.01,
                                      alpha_dv=1, beta_tan=1,
-                                     verbose=False, visualize=True, out_folder=None):
+                                     verbose=False, visualize=True, out_folder=None,
+                                     use_torch_grid=False, grid_device=None):
     """
     High-level simulation combining:
     - Full MCTS tree search (configurable horizon)
@@ -137,6 +140,10 @@ def run_orbital_camera_sim_full_mcts(target_radius, gamma_r, r_min_rollout, r_ma
     print(f"   Total paths: 13^{horizon} = {13**horizon}")
     print(f"   Time step: {time_step} seconds")
     print(f"   Number of steps: {num_steps}")
+    if(use_torch_grid):
+        print(f"Using torch and {grid_device}")
+    else:
+        print(f"Using cpu")
 
     if num_steps < 10:
         print("   WARNING: Running with num_steps < 10 may result in a non-playable video file.")
@@ -158,7 +165,11 @@ def run_orbital_camera_sim_full_mcts(target_radius, gamma_r, r_min_rollout, r_ma
     }
 
     # --- Initialize belief and ground truth ---
-    grid = VoxelGrid(grid_dims=(20, 20, 20))
+    grid = VoxelGrid(
+        grid_dims=(20, 20, 20),
+        use_torch=use_torch_grid,
+        device=grid_device,   # None = choose "cuda" if available
+    )
     rso = GroundTruthRSO(grid)
     
     # --- Create full MCTS controller ---
@@ -202,6 +213,8 @@ def run_orbital_camera_sim_full_mcts(target_radius, gamma_r, r_min_rollout, r_ma
     print(f"Initial State (ROEs): {np.round(state, 5)}")
     print(f"Initial Entropy: {initial_entropy:.4f}")
     print()
+
+    start_time = tm.time()
 
     # --- Main simulation loop ---
     for step in range(num_steps):
@@ -277,6 +290,9 @@ def run_orbital_camera_sim_full_mcts(target_radius, gamma_r, r_min_rollout, r_ma
         # 6. Move to next step
         state = next_state_propagated # Use the fully propagated state
         time += time_step
+
+    end_time = tm.time()
+    print(f"⏱ Episode runtime: {end_time - start_time:.2f} seconds")
 
     # --- Save results ---
     print(f"\n{'='*70}")

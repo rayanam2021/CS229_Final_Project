@@ -5,6 +5,8 @@ import numpy as np
 from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
 from datetime import datetime
 
+# Created to test sweeps for many params and find sweet spot
+
 if __name__ == "__main__":
     # You can set parameters here, or use defaults from scenario_full_mcts.py
     # c_values = [0.7, 1.4, 2.0]

@@ -75,13 +75,12 @@ class OrbitalMCTSModel:
         )
 
         # 2) update voxel grid belief (deep copy branch-specific grid)
-        grid = VoxelGrid(self.grid_dims)
-        grid.belief[:]    = state.grid.belief[:]     # copy from current state
-        grid.log_odds[:]  = state.grid.log_odds[:]
+        #    Use the grid's own clone() so we preserve numpy/torch backend and device.
+        grid = state.grid.clone()
 
-        entropy_before = calculate_entropy(grid.belief)
+        entropy_before = grid.get_entropy()
         simulate_observation(grid, self.rso, self.camera_fn, pos_child)
-        entropy_after = calculate_entropy(grid.belief)
+        entropy_after = grid.get_entropy()
 
         info_gain = entropy_before - entropy_after
         dv_cost   = float(np.linalg.norm(action))

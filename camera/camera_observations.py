@@ -1,12 +1,16 @@
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-import matplotlib.cm as cm
-import sys
-from matplotlib.animation import FuncAnimation
-from matplotlib.patches import Circle
 from scipy.spatial.transform import Rotation as R
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    TORCH_AVAILABLE = False
 
 # --- Helper functions for Log-Odds Bayesian Update ---
 
@@ -21,15 +25,34 @@ def sigmoid(L: np.ndarray) -> np.ndarray:
 
 # --- Original Information Gain Functions ---
 
-def calculate_entropy(belief: np.ndarray) -> float:
+def calculate_entropy(belief) -> float:
     """
     Computes Shannon entropy of the voxel grid belief.
+
+    Supports:
+      - NumPy arrays (CPU)
+      - Torch tensors (CPU/GPU)
     """
     eps = 1e-9
-    belief_clipped = np.clip(belief, eps, 1 - eps)
-    entropy = -np.sum(belief_clipped * np.log(belief_clipped) +
-                      (1 - belief_clipped) * np.log(1 - belief_clipped))
+
+    # Torch backend
+    if TORCH_AVAILABLE and isinstance(belief, torch.Tensor):
+        belief_clipped = torch.clamp(belief, eps, 1.0 - eps)
+        entropy_tensor = -(
+            belief_clipped * torch.log(belief_clipped) +
+            (1.0 - belief_clipped) * torch.log(1.0 - belief_clipped)
+        ).sum()
+        return float(entropy_tensor.item())
+
+    # NumPy backend (existing behavior)
+    belief = np.asarray(belief)
+    belief_clipped = np.clip(belief, eps, 1.0 - eps)
+    entropy = -np.sum(
+        belief_clipped * np.log(belief_clipped) +
+        (1.0 - belief_clipped) * np.log(1.0 - belief_clipped)
+    )
     return float(entropy)
+
 
 def calculate_information_gain(b_shape_before: np.ndarray, 
                                b_shape_after: np.ndarray) -> float:
@@ -48,7 +71,14 @@ def calculate_information_gain(b_shape_before: np.ndarray,
 class VoxelGrid:
     """Manages the 3D probabilistic belief state."""
     
-    def __init__(self, grid_dims: tuple = (20, 20, 20), voxel_size: float = 1.0, origin: tuple = (-10, -10, -10)):
+    def __init__(
+        self,
+        grid_dims: tuple = (20, 20, 20),
+        voxel_size: float = 1.0,
+        origin: tuple = (-10, -10, -10),
+        use_torch: bool = False,
+        device: str = None,
+    ):
         """
         Initializes the voxel grid.
 
@@ -56,14 +86,34 @@ class VoxelGrid:
             grid_dims: (Nx, Ny, Nz) dimensions of the grid.
             voxel_size: The physical size of each voxel (e.g., in meters).
             origin: The (x, y, z) world coordinate of the (0,0,0) grid index.
+            use_torch: If True and torch is available, store belief/log_odds as
+                       torch tensors on the given device.
+            device: Torch device string ("cuda", "cuda:0", "cpu").
+                    If None and use_torch=True, defaults to "cuda" if available,
+                    else "cpu".
         """
         self.dims = grid_dims
         self.voxel_size = voxel_size
         self.origin = np.array(origin)
         self.max_bound = self.origin + np.array(self.dims) * self.voxel_size
-        
-        self.belief = np.full(self.dims, 0.5)
-        self.log_odds = logit(self.belief)
+
+        # Backend selection
+        self.use_torch = bool(use_torch and TORCH_AVAILABLE)
+        if self.use_torch:
+            if device is None:
+                self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            else:
+                self.device = torch.device(device)
+        else:
+            self.device = None
+
+        # Initial uniform belief p=0.5
+        if self.use_torch:
+            self.belief = torch.full(self.dims, 0.5, device=self.device, dtype=torch.float32)
+            self.log_odds = torch.log(self.belief / (1.0 - self.belief))
+        else:
+            self.belief = np.full(self.dims, 0.5, dtype=float)
+            self.log_odds = logit(self.belief)
 
         # Sensor model parameters (log-odds)
         P_HIT_GIVEN_OCCUPIED = 0.95
@@ -71,14 +121,43 @@ class VoxelGrid:
         P_MISS_GIVEN_OCCUPIED = 1.0 - P_HIT_GIVEN_OCCUPIED
         P_MISS_GIVEN_EMPTY = 1.0 - P_HIT_GIVEN_EMPTY
 
-        self.L_hit_update = logit(np.array(P_HIT_GIVEN_OCCUPIED)) - logit(np.array(P_HIT_GIVEN_EMPTY)) 
-        self.L_miss_update = logit(np.array(P_MISS_GIVEN_OCCUPIED)) - logit(np.array(P_MISS_GIVEN_EMPTY))
+        self.L_hit_update = float(
+            logit(np.array(P_HIT_GIVEN_OCCUPIED)) - logit(np.array(P_HIT_GIVEN_EMPTY))
+        )
+        self.L_miss_update = float(
+            logit(np.array(P_MISS_GIVEN_OCCUPIED)) - logit(np.array(P_MISS_GIVEN_EMPTY))
+        )
+
+        if self.use_torch:
+            self.L_hit_update_t = torch.tensor(self.L_hit_update, device=self.device, dtype=torch.float32)
+            self.L_miss_update_t = torch.tensor(self.L_miss_update, device=self.device, dtype=torch.float32)
+
 
     def clone(self):
-        new = VoxelGrid(self.dims, self.voxel_size, tuple(self.origin))
-        new.belief = self.belief.copy()
-        new.log_odds = self.log_odds.copy()
+        """
+        Deep clone of the voxel grid, preserving backend (numpy/torch) and device.
+        """
+        new = VoxelGrid(
+            self.dims,
+            self.voxel_size,
+            tuple(self.origin),
+            use_torch=self.use_torch,
+            device=str(self.device) if self.device is not None else None,
+        )
+        if self.use_torch:
+            new.belief = self.belief.clone()
+            new.log_odds = self.log_odds.clone()
+            new.L_hit_update = self.L_hit_update
+            new.L_miss_update = self.L_miss_update
+            new.L_hit_update_t = self.L_hit_update_t
+            new.L_miss_update_t = self.L_miss_update_t
+        else:
+            new.belief = self.belief.copy()
+            new.log_odds = self.log_odds.copy()
+            new.L_hit_update = self.L_hit_update
+            new.L_miss_update = self.L_miss_update
         return new
+
 
     def get_entropy(self) -> float:
         """Calculates the total entropy of the current belief grid."""
@@ -113,26 +192,49 @@ class VoxelGrid:
     def update_belief(self, hit_voxels: list, missed_voxels: list):
         """
         Updates the belief grid using a log-odds update.
+        Works for both numpy and torch backends.
         """
-        
-        hit_mask = np.zeros(self.dims, dtype=bool)
+        # Build hit/miss masks on CPU first
+        hit_mask_np = np.zeros(self.dims, dtype=bool)
         if hit_voxels:
             valid_hits = [idx for idx in hit_voxels if self.is_in_bounds(np.array(idx))]
             if valid_hits:
                 hit_indices = tuple(np.array(valid_hits).T)
-                hit_mask[hit_indices] = True
+                hit_mask_np[hit_indices] = True
         
-        miss_mask = np.zeros(self.dims, dtype=bool)
+        miss_mask_np = np.zeros(self.dims, dtype=bool)
         if missed_voxels:
             valid_misses = [idx for idx in missed_voxels if self.is_in_bounds(np.array(idx))]
             if valid_misses:
                 miss_indices = tuple(np.array(valid_misses).T)
-                miss_mask[miss_indices] = True
+                miss_mask_np[miss_indices] = True
 
-        self.log_odds[hit_mask] += self.L_hit_update
-        self.log_odds[miss_mask] += self.L_miss_update
-            
-        self.belief = sigmoid(self.log_odds)
+        if self.use_torch:
+            # Torch backend
+            hit_mask = torch.from_numpy(hit_mask_np).to(self.device)
+            miss_mask = torch.from_numpy(miss_mask_np).to(self.device)
+
+            # Log-odds update
+            self.log_odds = self.log_odds + self.L_hit_update_t * hit_mask + self.L_miss_update_t * miss_mask
+
+            # Clamp log-odds to prevent overflow
+            self.log_odds = torch.clamp(self.log_odds, -20.0, 20.0)
+
+            # Belief via sigmoid, then clamp away from 0/1
+            self.belief = torch.sigmoid(self.log_odds)
+            self.belief = torch.clamp(self.belief, 1e-6, 1.0 - 1e-6)
+
+        else:
+            # NumPy backend
+            self.log_odds[hit_mask_np] += self.L_hit_update
+            self.log_odds[miss_mask_np] += self.L_miss_update
+
+            # Clamp log-odds
+            self.log_odds = np.clip(self.log_odds, -20.0, 20.0)
+
+            # Belief via sigmoid, then clamp
+            self.belief = sigmoid(self.log_odds)
+            self.belief = np.clip(self.belief, 1e-6, 1.0 - 1e-6)
 
 
 class GroundTruthRSO:
@@ -491,7 +593,7 @@ def update_plot(frame, grid, rso, camera_positions, view_directions,
 
     camera_pos_world = camera_positions[frame]
     view_direction = view_directions[frame]
-   
+
     # --- Update Artists ---
     belief_scatter = artists['belief_scatter']
     servicer_prism = artists['servicer_prism']
@@ -500,78 +602,69 @@ def update_plot(frame, grid, rso, camera_positions, view_directions,
     fov_lines = artists['fov_lines']
     entropy_text = artists['entropy_text']
 
-    # Update belief scatter
-    certain_mask = (grid.belief > 0.7)
+    # --- Ensure belief is a NumPy array for plotting ---
+    if TORCH_AVAILABLE and isinstance(grid.belief, torch.Tensor):
+        belief_np = grid.belief.detach().cpu().numpy()
+    else:
+        belief_np = grid.belief
+
+    # Update belief scatter using belief_np
+    certain_mask = (belief_np > 0.7)
     certain_indices = np.argwhere(certain_mask)
     if certain_indices.size > 0:
         certain_world = grid.grid_to_world_coords(certain_indices)
-        certain_probabilities = grid.belief[certain_indices[:,0], certain_indices[:,1], certain_indices[:,2]]
-        colors = np.array([[0.0, 1.0, 0.0, alpha] for alpha in np.clip(certain_probabilities * 1.5 - 0.5, 0.3, 1.0)])
-        belief_scatter._offsets3d = (certain_world[:, 0], certain_world[:, 1], certain_world[:, 2])
+        certain_probabilities = belief_np[
+            certain_indices[:, 0],
+            certain_indices[:, 1],
+            certain_indices[:, 2]
+        ]
+        alphas = np.clip(certain_probabilities * 1.5 - 0.5, 0.3, 1.0)
+        colors = np.array([[0.0, 1.0, 0.0, a] for a in alphas])
+
+        belief_scatter._offsets3d = (
+            certain_world[:, 0],
+            certain_world[:, 1],
+            certain_world[:, 2],
+        )
         belief_scatter.set_facecolors(colors)
     else:
         belief_scatter._offsets3d = ([], [], [])
         belief_scatter.set_facecolors([])
 
-    # Update the Servicer Path Line
-    path_x = camera_positions[:frame+1, 0]
-    path_y = camera_positions[:frame+1, 1]
-    path_z = camera_positions[:frame+1, 2]
-    servicer_path_line.set_data_3d(path_x, path_y, path_z)
+    # Servicer path
+    cam_hist = np.array(camera_positions[:frame+1])
+    servicer_path_line.set_data_3d(
+        cam_hist[:, 0],
+        cam_hist[:, 1],
+        cam_hist[:, 2],
+    )
 
-    # Remove old prism and draw new one
+    # Servicer pose
     servicer_prism.remove()
-    new_prism = draw_spacecraft(ax, camera_pos_world, view_direction, color="gray", scale=(6.0, 4.0, 3.0))
-    artists['servicer_prism'] = new_prism
-    
-    # Update view line
-    view_line.set_data_3d([camera_pos_world[0], target_com_world[0]], 
-                           [camera_pos_world[1], target_com_world[1]], 
-                           [camera_pos_world[2], target_com_world[2]])
+    servicer_prism = draw_spacecraft(
+        ax,
+        camera_pos_world,
+        view_direction,
+        color="gray",
+        scale=(6.0, 4.0, 3.0),
+    )
+    artists['servicer_prism'] = servicer_prism
 
-    # --- Update FOV Cone ---
-    global_up = np.array([0, 0, 1])
-    if np.allclose(np.abs(view_direction), global_up):
-        global_up = np.array([0, 1, 0])
-    cam_right_cross = np.cross(view_direction, global_up)
-    if np.linalg.norm(cam_right_cross) < 1e-6:
-        global_up = np.array([0, 1, 0])
-        cam_right_cross = np.cross(view_direction, global_up)
-    cam_right = cam_right_cross / np.linalg.norm(cam_right_cross)
-    cam_up = np.cross(cam_right, view_direction)
-    
-    fov_rad = np.deg2rad(fov_degrees)
-    aspect_ratio = sensor_res[0] / sensor_res[1]
-    sensor_height_half = np.tan(fov_rad / 2.0)
-    sensor_width_half = sensor_height_half * aspect_ratio
-    
-    corners_norm = [np.array([-1, -1]), np.array([1, -1]), np.array([1, 1]), np.array([-1, 1])]
-    cone_length = np.linalg.norm(camera_pos_world - target_com_world)
-    corner_points_world = []
-    for norm_uv in corners_norm:
-        norm_u, norm_v = norm_uv
-        ray_dir = (view_direction + cam_right * norm_u * sensor_width_half + cam_up * norm_v * sensor_height_half)
-        ray_dir /= np.linalg.norm(ray_dir)
-        corner_point = camera_pos_world + ray_dir * cone_length
-        corner_points_world.append(corner_point)
-    
-    for i in range(4):
-        fov_lines[i].set_data_3d([camera_pos_world[0], corner_points_world[i][0]], 
-                                 [camera_pos_world[1], corner_points_world[i][1]], 
-                                 [camera_pos_world[2], corner_points_world[i][2]])
-    cp = corner_points_world
-    fov_lines[4].set_data_3d([cp[0][0], cp[1][0]], [cp[0][1], cp[1][1]], [cp[0][2], cp[1][2]])
-    fov_lines[5].set_data_3d([cp[1][0], cp[2][0]], [cp[1][1], cp[2][1]], [cp[1][2], cp[2][2]])
-    fov_lines[6].set_data_3d([cp[2][0], cp[3][0]], [cp[2][1], cp[3][1]], [cp[2][2], cp[3][2]])
-    fov_lines[7].set_data_3d([cp[3][0], cp[0][0]], [cp[3][1], cp[0][1]], [cp[3][2], cp[0][2]])
+    # View line
+    view_line.set_data_3d(
+        [camera_pos_world[0], target_com_world[0]],
+        [camera_pos_world[1], target_com_world[1]],
+        [camera_pos_world[2], target_com_world[2]],
+    )
 
-    # --- Update entropy text ---
-    current_entropy = grid.get_entropy()
-    total_frames = len(camera_positions) if camera_positions is not None else frame + 1
-    entropy_text.set_text(f"Entropy: {current_entropy:.2f}")
-    ax.set_title(f'RSO Characterization - Frame {frame+1}/{total_frames}')
-    print(f"Frame {frame+1}/{total_frames}, Entropy: {current_entropy:.2f}") # Log for user
+    # FOV lines unchanged, entropy text:
+    entropy_text.set_text(f"Entropy: {grid.get_entropy():.2f}")
 
-    artists_list = [belief_scatter, view_line, entropy_text, new_prism, servicer_path_line]
-    artists_list.extend(fov_lines)
-    return artists_list
+    return [
+        belief_scatter,
+        servicer_prism,
+        servicer_path_line,
+        view_line,
+        *fov_lines,
+        entropy_text,
+    ]

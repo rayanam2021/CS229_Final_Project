@@ -5,6 +5,12 @@ import matplotlib.pyplot as plt
 from mcts.orbital_mdp_model import OrbitalMCTSModel, OrbitalState
 from camera.camera_observations import VoxelGrid, GroundTruthRSO
 
+# To test new heuristic rollout policy:
+# - Prefer smaller |dv|
+# - Prefer tangential/normal actions (parallax)
+# - Prefer radius near target_radius
+# - Reject actions that push radius outside [r_min_rollout, r_max_rollout]
+
 def build_test_model():
     # --- 1. Make a simple grid + RSO + camera fn ---
     grid_dims = (32, 32, 32)
