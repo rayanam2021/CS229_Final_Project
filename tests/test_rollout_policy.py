@@ -47,7 +47,11 @@ def build_test_model():
         rso=rso,
         camera_fn=camera_fn,
         lambda_dv=0.01,
-        max_depth=15
+        max_depth=15,
+        r_min_rollout=500.0,
+        r_max_rollout=5000.0,
+        target_radius=2000.0,
+        gamma_r=0.002
     )
 
     # --- 2. Build a test state (some relative position & empty grid) ---
@@ -64,7 +68,7 @@ def main(num_samples=10000, alpha_dv=10.0, beta_tan=0.5):
     axis_counts = Counter()  # 'R', 'T', 'N', 'zero'
 
     for _ in range(num_samples):
-        a = model.rollout_policy(state, alpha_dv=alpha_dv, beta_tan=beta_tan)
+        a = model.rollout_policy(state)
         actions = model.actions(state)
         # find index in the fixed action list
         idx = next(i for i, cand in enumerate(actions) if np.allclose(cand, a))

@@ -193,6 +193,27 @@ def run_orbital_camera_sim_full_mcts(target_radius, gamma_r, r_min_rollout, r_ma
     initial_state = np.array([0.0, 0.0, 0.0, 0.0002, 0.0, 0.0])
     state = initial_state + np.random.uniform(-0.0001, 0.0001, size=6)
 
+    # Sample radius between 1 km and 5 km
+    # r = np.random.uniform(1000.0, 5000.0)
+
+    # # Random direction on sphere
+    # u = np.random.normal(size=3)
+    # u /= np.linalg.norm(u)
+    # pos_rtn_init = r * u  # in meters
+
+    # # Zero relative velocity for simplicity (or add small noise)
+    # vel_rtn_init = np.zeros(3)
+
+    # # Convert to ROEs
+    # roe = rtn_to_roe(
+    #     pos_rtn_init / 1000.0,      # km
+    #     vel_rtn_init / 1000.0,      # km/s
+    #     a_chief,                    # km
+    #     n_chief,                    # rad/s
+    #     np.array([0.0])             # tspan = [0.0]
+    # )
+    # state = roe
+
     # --- Print initial RTN position for diagnostics ---
     tspan0 = np.array([0.0])
     rho_rtn0, rhodot_rtn0 = propagateGeomROE(state, a_chief, e_chief, i_chief, omega_chief, n_chief, tspan0)

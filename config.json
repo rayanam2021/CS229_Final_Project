@@ -1,18 +1,18 @@
 {
-  "run_id": "cuda_trial",
+  "run_id": "random_start",
   "num_steps": 20,
   "time_step": 30.0,
   "seed": 0,
 
-  "mcts_iters": 10,
+  "mcts_iters": 1000,
   "mcts_c": 1.4,
   "gamma": 0.95,
-  "horizon": 15,
+  "horizon": 20,
 
   "lambda_dv": 0.01,
 
   "alpha_dv": 60.0,
-  "beta_tan": 1.0,
+  "beta_tan": 0.1,
   "target_radius": 2000.0,
   "gamma_r": 0.002,
   "r_min_rollout": 500.0,
