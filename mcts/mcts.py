@@ -21,6 +21,7 @@ class Node:
         # Children and expansion tracking
         self.children = []
         self.untried_action_indices = list(range(len(self.actions)))  # indices of actions not expanded yet
+        np.random.shuffle(self.untried_action_indices)
 
         # Statistics for UCB1 and value estimates
         num_actions = len(self.actions)
@@ -38,7 +39,7 @@ class MCTS:
         self.gamma = gamma
         self.mdp = model
 
-    def get_best_root_action(self, root_state, step, out_folder):
+    def get_best_root_action(self, root_state, step, out_folder, return_stats=True):
         root_actions = self.mdp.actions(root_state)
         root = Node(root_state, actions=root_actions, action_index=None, parent=None)
 
@@ -54,7 +55,18 @@ class MCTS:
         best_action = root.actions[best_idx]
         best_value = float(root.Q_sa[best_idx])
 
-        self.export_tree_to_dot(root, step, out_folder)
+        if return_stats:
+            if step in (0, 5, 10, 19):
+                self._export_tree_to_dot(root, step, out_folder)
+            stats = {
+                "root_N": int(root.N),
+                "root_Q_sa": root.Q_sa.copy(),
+                "root_N_sa": root.N_sa.copy(),
+                "best_idx": best_idx,
+                "best_action": best_action,
+                "predicted_value": best_value,
+            }
+            return best_action, best_value, stats
 
         return best_action, best_value
 
@@ -160,7 +172,7 @@ class MCTS:
         self._backpropagate(node, value)
         return value
 
-    def export_tree_to_dot(self, root, step, output_path):
+    def _export_tree_to_dot(self, root, step, output_path):
         dot = Digraph()
 
         def add(node):

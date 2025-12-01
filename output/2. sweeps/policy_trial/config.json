@@ -1,0 +1,14 @@
+{
+    "run_id": "policy_trial",
+    "num_steps": 20,
+    "time_step": 30.0,
+    "seed": 0,
+    "mcts_iters": 1000,
+    "mcts_c": 1.4,
+    "gamma": 0.95,
+    "horizon": 15,
+    "alpha_dv": 10,
+    "beta_tan": 0.05,
+    "lambda_dv": 0.01,
+    "timestamp": "2025-11-21_18-17-54"
+}

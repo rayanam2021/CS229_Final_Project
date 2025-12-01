@@ -1,0 +1,12 @@
+{
+    "run_id": "1",
+    "num_steps": 20,
+    "time_step": 30.0,
+    "seed": 0,
+    "mcts_iters": 3000,
+    "mcts_c": 1.4,
+    "gamma": 0.95,
+    "horizon": 15,
+    "lambda_dv": 0.01,
+    "timestamp": "2025-11-20_17-27-15"
+}
