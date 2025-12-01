@@ -4,7 +4,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import sys
 
-# --- Helper functions for Log-Odds Bayesian Update --- (Unchanged)
+# --- Helper functions (Unchanged) ---
 def logit(p: np.ndarray) -> np.ndarray:
     p = np.clip(p, 1e-6, 1.0 - 1e-6)
     return np.log(p / (1.0 - p))
@@ -12,7 +12,6 @@ def logit(p: np.ndarray) -> np.ndarray:
 def sigmoid(L: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-L))
 
-# --- Information Gain Functions --- (Unchanged)
 def calculate_entropy(belief: np.ndarray) -> float:
     eps = 1e-9
     belief_clipped = np.clip(belief, eps, 1 - eps)
@@ -20,24 +19,20 @@ def calculate_entropy(belief: np.ndarray) -> float:
                       (1 - belief_clipped) * np.log(1 - belief_clipped))
     return float(entropy)
 
-# --- Simulation Classes --- (Unchanged VoxelGrid & GroundTruthRSO)
+# --- Classes (Unchanged) ---
 class VoxelGrid:
     def __init__(self, grid_dims=(20, 20, 20), voxel_size=1.0, origin=(-10, -10, -10)):
         self.dims = grid_dims
         self.voxel_size = voxel_size
         self.origin = np.array(origin)
         self.max_bound = self.origin + np.array(self.dims) * self.voxel_size
-        
         self.belief = np.full(self.dims, 0.5)
         self.log_odds = logit(self.belief)
-
-        P_HIT_GIVEN_OCCUPIED = 0.95
-        P_HIT_GIVEN_EMPTY = 0.001
-        P_MISS_GIVEN_OCCUPIED = 1.0 - P_HIT_GIVEN_OCCUPIED
-        P_MISS_GIVEN_EMPTY = 1.0 - P_HIT_GIVEN_EMPTY
-
-        self.L_hit_update = logit(np.array(P_HIT_GIVEN_OCCUPIED)) - logit(np.array(P_HIT_GIVEN_EMPTY)) 
-        self.L_miss_update = logit(np.array(P_MISS_GIVEN_OCCUPIED)) - logit(np.array(P_MISS_GIVEN_EMPTY))
+        
+        P_HIT_OCC = 0.95
+        P_HIT_EMP = 0.001
+        self.L_hit = logit(np.array(P_HIT_OCC)) - logit(np.array(P_HIT_EMP))
+        self.L_miss = logit(np.array(1-P_HIT_OCC)) - logit(np.array(1-P_HIT_EMP))
 
     def get_entropy(self) -> float:
         return calculate_entropy(self.belief)
@@ -64,14 +59,12 @@ class VoxelGrid:
         if hit_voxels:
             valid = [idx for idx in hit_voxels if self.is_in_bounds(np.array(idx))]
             if valid: hit_mask[tuple(np.array(valid).T)] = True
-        
         miss_mask = np.zeros(self.dims, dtype=bool)
         if missed_voxels:
             valid = [idx for idx in missed_voxels if self.is_in_bounds(np.array(idx))]
             if valid: miss_mask[tuple(np.array(valid).T)] = True
-
-        self.log_odds[hit_mask] += self.L_hit_update
-        self.log_odds[miss_mask] += self.L_miss_update
+        self.log_odds[hit_mask] += self.L_hit
+        self.log_odds[miss_mask] += self.L_miss
         self.belief = sigmoid(self.log_odds)
 
 class GroundTruthRSO:
@@ -83,12 +76,15 @@ class GroundTruthRSO:
     def _create_simple_shape(self):
         center = (self.dims[0] // 2, self.dims[1] // 2, self.dims[2] // 2)
         s = 4 
+        # Main body
         self.shape[center[0]-s:center[0]+s, center[1]-s:center[1]+s, center[2]-s:center[2]+s] = True
+        # Panel
         panel_length = 6
         self.shape[center[0]-s:center[0]+s, center[1]+s:center[1]+s+panel_length, center[2]-1:center[2]+1] = True
+        # Antenna
         self.shape[center[0]-1:center[0]+1, center[1]-1:center[1]+1, center[2]+s:center[2]+s+3] = True
 
-# --- Ray Tracing --- (Unchanged)
+# --- Ray Tracing ---
 def get_camera_rays(camera_pos, view_dir, fov_degrees, sensor_res):
     view_dir = view_dir / np.linalg.norm(view_dir)
     global_up = np.array([0, 0, 1])
@@ -115,7 +111,7 @@ def get_camera_rays(camera_pos, view_dir, fov_degrees, sensor_res):
     return np.array(rays)
 
 def _trace_ray(ray_origin, ray_dir, grid, rso, noise_params):
-    eps = sys.float_info.epsilon
+    eps = 1e-9
     ray_dir_safe = np.where(np.abs(ray_dir) < eps, np.sign(ray_dir) * eps + eps, ray_dir)
     t1 = (grid.origin - ray_origin) / ray_dir_safe
     t2 = (grid.max_bound - ray_origin) / ray_dir_safe
@@ -167,10 +163,11 @@ def simulate_observation(grid, rso, camera_fn, servicer_rtn):
 
 # --- VISUALIZATION ---
 
-def draw_spacecraft(ax, position, direction, color="gray", scale=(20.0, 10.0, 10.0)):
+def draw_spacecraft(ax, position, direction, color="gray", scale_factor=1.5):
     """
-    Draws a spacecraft. 
-    UPDATED: Default scale increased significantly for visibility.
+    Draws a spacecraft prism. 
+    Base dimensions ~ 4x2x2 meters. 
+    Default scale_factor=1.5 -> ~6x3x3 meters (Comparable to RSO which is ~8m).
     """
     direction = direction / np.linalg.norm(direction)
     global_z = np.array([0, 0, 1])
@@ -179,7 +176,13 @@ def draw_spacecraft(ax, position, direction, color="gray", scale=(20.0, 10.0, 10
     right = np.cross(direction, temp_up); right /= np.linalg.norm(right)
     up = np.cross(right, direction); up /= np.linalg.norm(up)
 
-    L, W, H = scale
+    # Base dimensions in meters
+    L, W, H = 4.0, 2.0, 2.0 
+    
+    L *= scale_factor
+    W *= scale_factor
+    H *= scale_factor
+
     d_vec = direction * (L / 2)
     r_vec = right * (W / 2)
     u_vec = up * (H / 2)
@@ -201,7 +204,7 @@ def draw_spacecraft(ax, position, direction, color="gray", scale=(20.0, 10.0, 10
 
 def plot_scenario(grid, rso, camera_pos_world, view_direction, fov_degrees, sensor_res, fig=None, ax=None):
     """
-    Initialize the plot.
+    Initialize the plot artists.
     """
     if fig is None:
         fig = plt.figure(figsize=(15, 12))
@@ -214,42 +217,87 @@ def plot_scenario(grid, rso, camera_pos_world, view_direction, fov_degrees, sens
 
         artists = {}
 
-        # Draw Grid Box
-        m, M = grid.origin, grid.max_bound
-        c = np.array([[m[0], m[1], m[2]], [M[0], m[1], m[2]], [M[0], M[1], m[2]], [m[0], M[1], m[2]],
-                      [m[0], m[1], M[2]], [M[0], m[1], M[2]], [M[0], M[1], M[2]], [m[0], M[1], M[2]]])
-        edges = [(0,1), (1,2), (2,3), (3,0), (4,5), (5,6), (6,7), (7,4), (0,4), (1,5), (2,6), (3,7)]
-        for i, j in edges: ax.plot([c[i,0], c[j,0]], [c[i,1], c[j,1]], [c[i,2], c[j,2]], 'gray', ls=':', lw=1)
+        # REMOVED: Grid Bounding Box lines
 
-        # Servicer Path Line
-        artists['servicer_path_line'], = ax.plot([camera_pos_world[0]], [camera_pos_world[1]], [camera_pos_world[2]], 
-                                                 c='blue', ls='-', lw=2, alpha=0.6, label='Trajectory')
+        # 1. Servicer Path Line (Starts Empty)
+        artists['servicer_path_line'], = ax.plot([], [], [], 
+                                                 c='blue', ls='-', lw=1.5, alpha=0.6, label='Trajectory')
 
-        # Burn Markers (New)
+        # 2. Burn Markers
         artists['burn_scatter'] = ax.scatter([], [], [], c='orange', marker='^', s=150, label='Maneuver', zorder=10)
 
-        # Servicer Spacecraft
-        artists['servicer_prism'] = draw_spacecraft(ax, camera_pos_world, view_direction)
+        # 3. Servicer Spacecraft
+        artists['servicer_prism'] = draw_spacecraft(ax, camera_pos_world, view_direction, scale_factor=1.5)
+        ax.plot([], [], [], color='gray', marker='s', markersize=10, linestyle='None', label='Servicer')
         
-        # FOV Lines
-        artists['view_line'] = ax.plot([], [], [], c='green', ls='--', lw=1)[0]
-        artists['fov_lines'] = [ax.plot([], [], [], c='cyan', ls=':', lw=1)[0] for _ in range(8)]
+        # 4. FOV Lines (Thicker, Magenta for visibility)
+        artists['fov_lines'] = [ax.plot([], [], [], c='magenta', ls='-', lw=2.0, label='Camera FOV' if i==0 else None)[0] for i in range(8)]
+
+        # 5. View Direction Line (Deep Green, thick)
+        artists['view_line'] = ax.plot([], [], [], c='darkgreen', ls='--', lw=2.5, label='View Direction')[0]
         
-        # Belief Scatter
+        # 6. Belief Scatter
         artists['belief_scatter'] = ax.scatter([], [], [], c='green', marker='s', s=30, label='Belief (P>0.7)', depthshade=True)
         
+        # 7. Ground Truth (Wireframe)
+        truth_filled_voxels = np.argwhere(rso.shape)
+        gt_lines = []
+        
+        # (Ground truth drawing logic unchanged for brevity, kept same as previous)
+        exposed_faces = [] 
+        padded_shape = np.pad(rso.shape, pad_width=1, mode='constant', constant_values=False)
+        for x, y, z in truth_filled_voxels:
+            px, py, pz = x + 1, y + 1, z + 1
+            if not padded_shape[px+1, py, pz]: exposed_faces.append(((x,y,z), 0))
+            if not padded_shape[px-1, py, pz]: exposed_faces.append(((x,y,z), 1))
+            if not padded_shape[px, py+1, pz]: exposed_faces.append(((x,y,z), 2))
+            if not padded_shape[px, py-1, pz]: exposed_faces.append(((x,y,z), 3))
+            if not padded_shape[px, py, pz+1]: exposed_faces.append(((x,y,z), 4))
+            if not padded_shape[px, py, pz-1]: exposed_faces.append(((x,y,z), 5))
+
+        face_verts = []
+        for (x, y, z), face_dir in exposed_faces: 
+            origin_voxel = grid.origin + np.array([x, y, z]) * grid.voxel_size
+            size = grid.voxel_size
+            c = [
+                origin_voxel, origin_voxel + [size, 0, 0], origin_voxel + [0, size, 0], 
+                origin_voxel + [0, 0, size], origin_voxel + [size, size, 0], 
+                origin_voxel + [size, 0, size], origin_voxel + [0, size, size], 
+                origin_voxel + [size, size, size]
+            ]
+            if face_dir == 0: face_verts.append([c[1], c[4], c[7], c[5]]) 
+            elif face_dir == 1: face_verts.append([c[0], c[3], c[6], c[2]])
+            elif face_dir == 2: face_verts.append([c[2], c[4], c[7], c[6]]) 
+            elif face_dir == 3: face_verts.append([c[0], c[1], c[5], c[3]]) 
+            elif face_dir == 4: face_verts.append([c[3], c[5], c[7], c[6]]) 
+            elif face_dir == 5: face_verts.append([c[0], c[1], c[4], c[2]]) 
+
+        if face_verts:
+            edges_set = set()
+            for face in face_verts:
+                p1, p2, p3, p4 = face
+                edges_set.add(tuple(sorted((tuple(p1), tuple(p2)))))
+                edges_set.add(tuple(sorted((tuple(p2), tuple(p3)))))
+                edges_set.add(tuple(sorted((tuple(p3), tuple(p4)))))
+                edges_set.add(tuple(sorted((tuple(p4), tuple(p1)))))
+            
+            for idx, (p1_tuple, p2_tuple) in enumerate(edges_set):
+                p1 = np.array(p1_tuple); p2 = np.array(p2_tuple)
+                label = 'Ground Truth' if idx == 0 else None
+                line, = ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], 
+                                 color=(1.0, 0.6, 0.6), linewidth=0.8, alpha=0.6, label=label)
+                gt_lines.append(line)
+        artists['gt_lines'] = gt_lines
+
         artists['entropy_text'] = ax.text2D(0.05, 0.95, "", transform=ax.transAxes, fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
         
-        ax.legend(loc='upper right')
+        ax.legend(loc='upper right', fontsize='small')
         return fig, ax, artists
     return fig, ax, None
 
 def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees, sensor_res, noise_params, ax, artists, target_com, burn_indices=None):
     """
     Updates the plot for the given frame.
-    
-    Args:
-        burn_indices (list): List of frame indices where a burn occurred.
     """
     if frame >= len(camera_positions): return []
 
@@ -269,7 +317,7 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
         artists['belief_scatter']._offsets3d = ([], [], [])
 
     # 2. Update Servicer Path (Growing Line)
-    # The path is drawn from start up to current frame
+    # Draw from start (0) to current (frame + 1) to show history
     path_x = camera_positions[:frame+1, 0]
     path_y = camera_positions[:frame+1, 1]
     path_z = camera_positions[:frame+1, 2]
@@ -277,7 +325,6 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
 
     # 3. Update Burn Markers
     if burn_indices:
-        # Find all burns that have happened up to this frame
         past_burns = [b_idx for b_idx in burn_indices if b_idx <= frame]
         if past_burns:
             burn_x = camera_positions[past_burns, 0]
@@ -289,14 +336,13 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
 
     # 4. Update Spacecraft
     artists['servicer_prism'].remove()
-    # Scale spacecraft size. You might want to adjust scale based on orbit size.
-    artists['servicer_prism'] = draw_spacecraft(ax, cam_pos, view_dir, scale=(30.0, 15.0, 15.0)) # Made larger
+    # Use Fixed Scaling (1.5 -> ~6m) to keep it visible but not huge
+    artists['servicer_prism'] = draw_spacecraft(ax, cam_pos, view_dir, scale_factor=1.5)
     
-    # 5. Update FOV & View Line
+    # 5. Update View Direction Line
     artists['view_line'].set_data_3d([cam_pos[0], target_com[0]], [cam_pos[1], target_com[1]], [cam_pos[2], target_com[2]])
     
-    # ... (FOV calculation logic same as before) ...
-    # Simplified for brevity here (assumes global up logic from previous file)
+    # 6. Update FOV Lines
     global_up = np.array([0, 0, 1])
     if np.allclose(np.abs(view_dir), global_up): global_up = np.array([0, 1, 0])
     right = np.cross(view_dir, global_up); right /= np.linalg.norm(right)
@@ -307,8 +353,8 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
     h_half = np.tan(fov_rad/2)
     w_half = h_half * ar
     
-    corners = [np.array([-1,-1]), np.array([1,-1]), np.array([1,1]), np.array([-1,1])]
     dist = np.linalg.norm(cam_pos - target_com)
+    corners = [np.array([-1,-1]), np.array([1,-1]), np.array([1,1]), np.array([-1,1])]
     pts = []
     for u,v in corners:
         d = (view_dir + right*u*w_half + up*v*h_half)
@@ -317,7 +363,6 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
         
     for i in range(4):
         artists['fov_lines'][i].set_data_3d([cam_pos[0], pts[i][0]], [cam_pos[1], pts[i][1]], [cam_pos[2], pts[i][2]])
-    # Connect corners
     pts.append(pts[0])
     for i in range(4):
         artists['fov_lines'][4+i].set_data_3d([pts[i][0], pts[i+1][0]], [pts[i][1], pts[i+1][1]], [pts[i][2], pts[i+1][2]])

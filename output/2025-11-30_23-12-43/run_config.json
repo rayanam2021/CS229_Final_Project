@@ -16,7 +16,10 @@
     },
     "camera": {
         "fov_degrees": 10.0,
-        "sensor_res": [64, 64],
+        "sensor_res": [
+            64,
+            64
+        ],
         "noise_params": {
             "p_hit_given_occupied": 0.95,
             "p_hit_given_empty": 0.001
