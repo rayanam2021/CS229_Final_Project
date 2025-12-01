@@ -7,6 +7,7 @@ import pandas as pd
 import os
 from multiprocessing import cpu_count
 from mcts.orbital_mdp_model import OrbitalMCTSModel, OrbitalState
+from mcts.mcts import MCTS
 
 class MCTSController:
     
