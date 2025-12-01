@@ -1,13 +1,5 @@
 """
-Full MCTS Tree Search Controller for Orbital Camera RSO Characterization.
-
-This implements a complete Monte Carlo Tree Search with:
-- Tree structure (with depth of horizon)
-- All 13 actions branching at each level
-- 13^3 = 2,197 total paths through the tree
-- Bottom-up value propagation
-- Optimal first-action selection
-- Parallel evaluation of child nodes for speedup
+Standard MCTS Controller using orbital_mdp_model.
 """
 
 import numpy as np
@@ -28,7 +20,7 @@ class MCTSController:
     
     def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
                  time_step, horizon, alpha_dv, beta_tan, target_radius, gamma_r, r_min_rollout, r_max_rollout,
-                 lambda_dv, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
+                 lambda_dv, branching_factor=13, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
         """
         Args:
             mu_earth: Gravitational parameter
@@ -38,7 +30,8 @@ class MCTSController:
             omega_chief: Chief argument of perigee
             time_step: Time step duration (seconds)
             horizon: Tree depth (number of decision levels)
-            num_workers: Number of parallel workers (None = use all CPU cores)
+            branching_factor: Number of actions per node (typically 13)
+            num_workers: (Not used in serial MCTS but kept for interface compatibility)
         """
         self.mu_earth = mu_earth
         self.a_chief = a_chief
@@ -48,6 +41,7 @@ class MCTSController:
         self.n_chief = n_chief
         self.time_step = time_step
         self.horizon = horizon
+        self.branching_factor = branching_factor
         self.num_workers = num_workers or max(1, cpu_count() - 1)
         self.replay_buffer = []
         self.lambda_dv = lambda_dv
@@ -84,7 +78,7 @@ class MCTSController:
         self.model.grid_dims = grid.dims
 
         # Wrap ROEs + belief into an OrbitalState for MCTS
-        root_state = OrbitalState(roe=state.copy(), grid=grid)
+        root_state = OrbitalState(roe=state.copy(), grid=grid, time=time)
 
         best_action, value, root_stats = self.mcts.get_best_root_action(root_state, step, out_folder, return_stats=True)
 
@@ -145,9 +139,6 @@ class MCTSController:
     def save_replay_buffer(self, base_dir="output"):
         """
         Write replay buffer to CSV in timestamped folder.
-        
-        Args:
-            base_dir: Output directory
         """
         # Use unified output folder if provided
         if hasattr(self, 'output_folder') and self.output_folder:

@@ -3,509 +3,248 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from scipy.spatial.transform import Rotation as R
+import sys
 
-try:
-    import torch
-    TORCH_AVAILABLE = True
-except ImportError:
-    torch = None
-    TORCH_AVAILABLE = False
-
-# --- Helper functions for Log-Odds Bayesian Update ---
-
+# --- Helper functions (Unchanged) ---
 def logit(p: np.ndarray) -> np.ndarray:
-    """Converts probabilities (p) to log-odds (L)."""
-    p = np.clip(p, 1e-6, 1.0 - 1e-6) # Clip to avoid log(0)
+    p = np.clip(p, 1e-6, 1.0 - 1e-6)
     return np.log(p / (1.0 - p))
 
 def sigmoid(L: np.ndarray) -> np.ndarray:
-    """Converts log-odds (L) back to probabilities (p)."""
     return 1.0 / (1.0 + np.exp(-L))
 
-# --- Original Information Gain Functions ---
-
-def calculate_entropy(belief) -> float:
-    """
-    Computes Shannon entropy of the voxel grid belief.
-
-    Supports:
-      - NumPy arrays (CPU)
-      - Torch tensors (CPU/GPU)
-    """
+def calculate_entropy(belief: np.ndarray) -> float:
     eps = 1e-9
-
-    # Torch backend
-    if TORCH_AVAILABLE and isinstance(belief, torch.Tensor):
-        belief_clipped = torch.clamp(belief, eps, 1.0 - eps)
-        entropy_tensor = -(
-            belief_clipped * torch.log(belief_clipped) +
-            (1.0 - belief_clipped) * torch.log(1.0 - belief_clipped)
-        ).sum()
-        return float(entropy_tensor.item())
-
-    # NumPy backend (existing behavior)
-    belief = np.asarray(belief)
-    belief_clipped = np.clip(belief, eps, 1.0 - eps)
-    entropy = -np.sum(
-        belief_clipped * np.log(belief_clipped) +
-        (1.0 - belief_clipped) * np.log(1.0 - belief_clipped)
-    )
+    belief_clipped = np.clip(belief, eps, 1 - eps)
+    entropy = -np.sum(belief_clipped * np.log(belief_clipped) +
+                      (1 - belief_clipped) * np.log(1 - belief_clipped))
     return float(entropy)
 
-
-def calculate_information_gain(b_shape_before: np.ndarray, 
-                               b_shape_after: np.ndarray) -> float:
-    """
-    Calculates the information gain as the reduction in entropy.
-    """
-    entropy_before = calculate_entropy(b_shape_before)
-    entropy_after = calculate_entropy(b_shape_after)
-    
-    info_gain = entropy_before - entropy_after
-    
-    return info_gain
-
-# --- Simulation Classes and Functions ---
-
+# --- Classes (Unchanged) ---
 class VoxelGrid:
-    """Manages the 3D probabilistic belief state."""
-    
-    def __init__(
-        self,
-        grid_dims: tuple = (20, 20, 20),
-        voxel_size: float = 1.0,
-        origin: tuple = (-10, -10, -10),
-        use_torch: bool = False,
-        device: str = None,
-    ):
-        """
-        Initializes the voxel grid.
-
-        Args:
-            grid_dims: (Nx, Ny, Nz) dimensions of the grid.
-            voxel_size: The physical size of each voxel (e.g., in meters).
-            origin: The (x, y, z) world coordinate of the (0,0,0) grid index.
-            use_torch: If True and torch is available, store belief/log_odds as
-                       torch tensors on the given device.
-            device: Torch device string ("cuda", "cuda:0", "cpu").
-                    If None and use_torch=True, defaults to "cuda" if available,
-                    else "cpu".
-        """
+    def __init__(self, grid_dims=(20, 20, 20), voxel_size=1.0, origin=(-10, -10, -10)):
         self.dims = grid_dims
         self.voxel_size = voxel_size
         self.origin = np.array(origin)
         self.max_bound = self.origin + np.array(self.dims) * self.voxel_size
-
-        # Backend selection
-        self.use_torch = bool(use_torch and TORCH_AVAILABLE)
-        if self.use_torch:
-            if device is None:
-                self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            else:
-                self.device = torch.device(device)
-        else:
-            self.device = None
-
-        # Initial uniform belief p=0.5
-        if self.use_torch:
-            self.belief = torch.full(self.dims, 0.5, device=self.device, dtype=torch.float32)
-            self.log_odds = torch.log(self.belief / (1.0 - self.belief))
-        else:
-            self.belief = np.full(self.dims, 0.5, dtype=float)
-            self.log_odds = logit(self.belief)
-
-        # Sensor model parameters (log-odds)
-        P_HIT_GIVEN_OCCUPIED = 0.95
-        P_HIT_GIVEN_EMPTY = 0.001
-        P_MISS_GIVEN_OCCUPIED = 1.0 - P_HIT_GIVEN_OCCUPIED
-        P_MISS_GIVEN_EMPTY = 1.0 - P_HIT_GIVEN_EMPTY
-
-        self.L_hit_update = float(
-            logit(np.array(P_HIT_GIVEN_OCCUPIED)) - logit(np.array(P_HIT_GIVEN_EMPTY))
-        )
-        self.L_miss_update = float(
-            logit(np.array(P_MISS_GIVEN_OCCUPIED)) - logit(np.array(P_MISS_GIVEN_EMPTY))
-        )
-
-        if self.use_torch:
-            self.L_hit_update_t = torch.tensor(self.L_hit_update, device=self.device, dtype=torch.float32)
-            self.L_miss_update_t = torch.tensor(self.L_miss_update, device=self.device, dtype=torch.float32)
-
-
-    def clone(self):
-        """
-        Deep clone of the voxel grid, preserving backend (numpy/torch) and device.
-        """
-        new = VoxelGrid(
-            self.dims,
-            self.voxel_size,
-            tuple(self.origin),
-            use_torch=self.use_torch,
-            device=str(self.device) if self.device is not None else None,
-        )
-        if self.use_torch:
-            new.belief = self.belief.clone()
-            new.log_odds = self.log_odds.clone()
-            new.L_hit_update = self.L_hit_update
-            new.L_miss_update = self.L_miss_update
-            new.L_hit_update_t = self.L_hit_update_t
-            new.L_miss_update_t = self.L_miss_update_t
-        else:
-            new.belief = self.belief.copy()
-            new.log_odds = self.log_odds.copy()
-            new.L_hit_update = self.L_hit_update
-            new.L_miss_update = self.L_miss_update
-        return new
-
+        self.belief = np.full(self.dims, 0.5)
+        self.log_odds = logit(self.belief)
+        
+        P_HIT_OCC = 0.95
+        P_HIT_EMP = 0.001
+        self.L_hit = logit(np.array(P_HIT_OCC)) - logit(np.array(P_HIT_EMP))
+        self.L_miss = logit(np.array(1-P_HIT_OCC)) - logit(np.array(1-P_HIT_EMP))
 
     def get_entropy(self) -> float:
-        """Calculates the total entropy of the current belief grid."""
         return calculate_entropy(self.belief)
 
     def grid_to_world_coords(self, indices: np.ndarray) -> np.ndarray:
-        """Converts grid indices (i, j, k) to world coordinates (x, y, z)."""
-        if indices.size == 0:
-            return np.array([])
+        if indices.size == 0: return np.array([])
         return self.origin + (indices + 0.5) * self.voxel_size
 
     def world_to_grid_coords(self, world_pos: np.ndarray) -> np.ndarray:
-        """Converts world coordinates (x, y, z) to grid indices (i, j, k)."""
-        if world_pos.ndim == 1:
-            world_pos = world_pos[np.newaxis, :]
-            
+        if world_pos.ndim == 1: world_pos = world_pos[np.newaxis, :]
         indices = np.floor((world_pos - self.origin) / self.voxel_size)
         return indices.astype(int).squeeze()
 
     def is_in_bounds(self, grid_indices: np.ndarray) -> bool:
-        """Checks if (i, j, k) grid indices are within the grid dimensions."""
         if grid_indices.ndim == 1:
             return (all(grid_indices >= 0) and 
                     grid_indices[0] < self.dims[0] and
                     grid_indices[1] < self.dims[1] and
                     grid_indices[2] < self.dims[2])
-        else:
-            # Handle array of indices
-            return np.all((grid_indices >= 0) & (grid_indices < self.dims), axis=1)
-
+        return np.all((grid_indices >= 0) & (grid_indices < self.dims), axis=1)
 
     def update_belief(self, hit_voxels: list, missed_voxels: list):
-        """
-        Updates the belief grid using a log-odds update.
-        Works for both numpy and torch backends.
-        """
-        # Build hit/miss masks on CPU first
-        hit_mask_np = np.zeros(self.dims, dtype=bool)
+        hit_mask = np.zeros(self.dims, dtype=bool)
         if hit_voxels:
-            valid_hits = [idx for idx in hit_voxels if self.is_in_bounds(np.array(idx))]
-            if valid_hits:
-                hit_indices = tuple(np.array(valid_hits).T)
-                hit_mask_np[hit_indices] = True
-        
-        miss_mask_np = np.zeros(self.dims, dtype=bool)
+            valid = [idx for idx in hit_voxels if self.is_in_bounds(np.array(idx))]
+            if valid: hit_mask[tuple(np.array(valid).T)] = True
+        miss_mask = np.zeros(self.dims, dtype=bool)
         if missed_voxels:
-            valid_misses = [idx for idx in missed_voxels if self.is_in_bounds(np.array(idx))]
-            if valid_misses:
-                miss_indices = tuple(np.array(valid_misses).T)
-                miss_mask_np[miss_indices] = True
-
-        if self.use_torch:
-            # Torch backend
-            hit_mask = torch.from_numpy(hit_mask_np).to(self.device)
-            miss_mask = torch.from_numpy(miss_mask_np).to(self.device)
-
-            # Log-odds update
-            self.log_odds = self.log_odds + self.L_hit_update_t * hit_mask + self.L_miss_update_t * miss_mask
-
-            # Clamp log-odds to prevent overflow
-            self.log_odds = torch.clamp(self.log_odds, -20.0, 20.0)
-
-            # Belief via sigmoid, then clamp away from 0/1
-            self.belief = torch.sigmoid(self.log_odds)
-            self.belief = torch.clamp(self.belief, 1e-6, 1.0 - 1e-6)
-
-        else:
-            # NumPy backend
-            self.log_odds[hit_mask_np] += self.L_hit_update
-            self.log_odds[miss_mask_np] += self.L_miss_update
-
-            # Clamp log-odds
-            self.log_odds = np.clip(self.log_odds, -20.0, 20.0)
-
-            # Belief via sigmoid, then clamp
-            self.belief = sigmoid(self.log_odds)
-            self.belief = np.clip(self.belief, 1e-6, 1.0 - 1e-6)
-
+            valid = [idx for idx in missed_voxels if self.is_in_bounds(np.array(idx))]
+            if valid: miss_mask[tuple(np.array(valid).T)] = True
+        self.log_odds[hit_mask] += self.L_hit
+        self.log_odds[miss_mask] += self.L_miss
+        self.belief = sigmoid(self.log_odds)
 
 class GroundTruthRSO:
-    """Represents the actual, hidden ground-truth shape of the RSO."""
-    
     def __init__(self, grid: VoxelGrid):
         self.dims = grid.dims
         self.shape = np.zeros(self.dims, dtype=bool)
         self._create_simple_shape()
 
     def _create_simple_shape(self):
-        """Creates a simple 'T' or 'L' shape for demonstration."""
         center = (self.dims[0] // 2, self.dims[1] // 2, self.dims[2] // 2)
-        s = 4 # half-size for main body
-        
-        # Main body (cube)
-        self.shape[center[0]-s:center[0]+s, 
-                   center[1]-s:center[1]+s, 
-                   center[2]-s:center[2]+s] = True
-        
-        # "Solar panel" extending in Y direction
-        panel_thickness = 1
+        s = 4 
+        # Main body
+        self.shape[center[0]-s:center[0]+s, center[1]-s:center[1]+s, center[2]-s:center[2]+s] = True
+        # Panel
         panel_length = 6
-        self.shape[center[0]-s:center[0]+s, 
-                   center[1]+s:center[1]+s+panel_length, 
-                   center[2]-panel_thickness:center[2]+panel_thickness] = True
-        
-        # Add a small antenna on top
-        self.shape[center[0]-1:center[0]+1,
-                   center[1]-1:center[1]+1,
-                   center[2]+s:center[2]+s+3] = True
-                    
-        print(f"Created ground truth RSO with {np.sum(self.shape)} filled voxels.")
+        self.shape[center[0]-s:center[0]+s, center[1]+s:center[1]+s+panel_length, center[2]-1:center[2]+1] = True
+        # Antenna
+        self.shape[center[0]-1:center[0]+1, center[1]-1:center[1]+1, center[2]+s:center[2]+s+3] = True
 
-# --- New Pinhole Camera and Ray Tracing Functions ---
-
-def get_camera_rays(camera_pos: np.ndarray, view_dir: np.ndarray, fov_degrees: float, sensor_res: tuple) -> np.ndarray:
-    """
-    Generates a list of ray direction vectors for a pinhole camera.
-    """
+# --- Ray Tracing ---
+def get_camera_rays(camera_pos, view_dir, fov_degrees, sensor_res):
     view_dir = view_dir / np.linalg.norm(view_dir)
-    
     global_up = np.array([0, 0, 1])
-    if np.allclose(np.abs(view_dir), global_up):
-        global_up = np.array([0, 1, 0])
-        
+    if np.allclose(np.abs(view_dir), global_up): global_up = np.array([0, 1, 0])
     cam_right = np.cross(view_dir, global_up)
     if np.linalg.norm(cam_right) < 1e-6:
         global_up = np.array([0, 1, 0])
         cam_right = np.cross(view_dir, global_up)
-
     cam_right /= np.linalg.norm(cam_right)
     cam_up = np.cross(cam_right, view_dir)
 
     fov_rad = np.deg2rad(fov_degrees)
     aspect_ratio = sensor_res[0] / sensor_res[1]
-    sensor_height_half = np.tan(fov_rad / 2.0) 
-    sensor_width_half = sensor_height_half * aspect_ratio
+    h_half = np.tan(fov_rad / 2.0) 
+    w_half = h_half * aspect_ratio
     
     rays = []
     for u in range(sensor_res[0]):
         for v in range(sensor_res[1]):
-            norm_u = (u + 0.5) / sensor_res[0] * 2.0 - 1.0
-            norm_v = (v + 0.5) / sensor_res[1] * 2.0 - 1.0
-            
-            ray_dir = (view_dir + 
-                       cam_right * norm_u * sensor_width_half + 
-                       cam_up * norm_v * sensor_height_half)
-            
-            ray_dir /= np.linalg.norm(ray_dir)
-            rays.append(ray_dir)
-            
+            nu = (u + 0.5) / sensor_res[0] * 2.0 - 1.0
+            nv = (v + 0.5) / sensor_res[1] * 2.0 - 1.0
+            r = (view_dir + cam_right * nu * w_half + cam_up * nv * h_half)
+            rays.append(r / np.linalg.norm(r))
     return np.array(rays)
 
-
-
-def _trace_ray(ray_origin: np.ndarray, ray_dir: np.ndarray,
-               grid: VoxelGrid, rso: GroundTruthRSO, noise_params: dict):
-    """
-    Traces a ray through the voxel grid using 3D DDA (Amanatides–Woo).
-    """
-
-    # --- 1. Bounding box intersection ---
-    eps = sys.float_info.epsilon
+def _trace_ray(ray_origin, ray_dir, grid, rso, noise_params):
+    eps = 1e-9
     ray_dir_safe = np.where(np.abs(ray_dir) < eps, np.sign(ray_dir) * eps + eps, ray_dir)
-
     t1 = (grid.origin - ray_origin) / ray_dir_safe
     t2 = (grid.max_bound - ray_origin) / ray_dir_safe
+    t_min, t_max = np.minimum(t1, t2), np.maximum(t1, t2)
+    t_enter, t_exit = np.max(t_min), np.min(t_max)
 
-    t_min = np.minimum(t1, t2)
-    t_max = np.maximum(t1, t2)
-
-    t_enter = np.max(t_min)
-    t_exit = np.min(t_max)
-
-    if t_enter > t_exit or t_exit < 0:
-        return None, "miss", []
-
-    if t_enter < 0:
-        start_point_world = ray_origin
-        t_enter = 0.0
-    else:
-        start_point_world = ray_origin + ray_dir * t_enter
-
-    # --- 2. Initialize traversal ---
-    current_voxel = grid.world_to_grid_coords(start_point_world)
-    if not grid.is_in_bounds(current_voxel):
-        # This can happen if ray starts inside but numerical error
-        # pushes start_point_world just outside grid.
-        return None, "miss", []
+    if t_enter > t_exit or t_exit < 0: return None, "miss", []
+    start_point = ray_origin if t_enter < 0 else ray_origin + ray_dir * t_enter
+    
+    curr = grid.world_to_grid_coords(start_point)
+    if not grid.is_in_bounds(curr): return None, "miss", []
 
     step = np.sign(ray_dir).astype(int)
     step[step == 0] = 1
-
-    voxel_size = grid.voxel_size
-    t_delta = np.abs(voxel_size / ray_dir_safe)
-
-    voxel_boundary = grid.origin + (current_voxel + (step > 0)) * voxel_size
-    t_max = (voxel_boundary - ray_origin) / ray_dir_safe
-
-    missed_voxels = []
-
-    # --- 3. DDA traversal ---
-    max_steps = int(np.sum(grid.dims))
-    for _ in range(max_steps):
-        if not grid.is_in_bounds(current_voxel):
-            break
-
-        voxel_tuple = tuple(current_voxel)
-        missed_voxels.append(voxel_tuple)
-
-        # --- Hit test ---
-        if rso.shape[voxel_tuple]:
-            # True occupied voxel (part of RSO)
+    t_delta = np.abs(grid.voxel_size / ray_dir_safe)
+    bound = grid.origin + (curr + (step > 0)) * grid.voxel_size
+    t_max_march = (bound - ray_origin) / ray_dir_safe
+    
+    missed = []
+    for _ in range(int(np.sum(grid.dims)) * 2):
+        if not grid.is_in_bounds(curr): break
+        v_idx = tuple(curr)
+        missed.append(v_idx)
+        
+        if rso.shape[v_idx]:
             if np.random.rand() < noise_params["p_hit_given_occupied"]:
-                return voxel_tuple, "hit", missed_voxels[:-1]
-            else:
-                continue # Sensor failed to detect
-        else:
-            # False positive test for empty space
-            if np.random.rand() < noise_params["p_hit_given_empty"]:
-                return voxel_tuple, "hit", missed_voxels[:-1]
+                return v_idx, "hit", missed[:-1]
+        elif np.random.rand() < noise_params["p_hit_given_empty"]:
+            return v_idx, "hit", missed[:-1]
 
-        # --- Move to next voxel ---
-        axis = np.argmin(t_max)
-        t_enter = t_max[axis]
-        t_max[axis] += t_delta[axis]
-        current_voxel[axis] += step[axis]
+        axis = np.argmin(t_max_march)
+        t_max_march[axis] += t_delta[axis]
+        curr[axis] += step[axis]
+    return None, "miss", missed
 
-        if t_enter > t_exit:
-            break
+def simulate_observation(grid, rso, camera_fn, servicer_rtn):
+    cam_pos = servicer_rtn[-1] if servicer_rtn.ndim > 1 else servicer_rtn
+    view_dir = -cam_pos / np.linalg.norm(cam_pos)
+    rays = get_camera_rays(cam_pos, view_dir, camera_fn['fov_degrees'], camera_fn['sensor_res'])
+    
+    hits, misses = set(), set()
+    for r in rays:
+        h, s, m = _trace_ray(cam_pos, r, grid, rso, camera_fn['noise_params'])
+        misses.update(m)
+        if s == 'hit': hits.add(h)
+    
+    grid.update_belief(list(hits), list(misses))
+    return list(hits), list(misses)
 
-    return None, "miss", missed_voxels
+# --- VISUALIZATION ---
 
-
-def simulate_observation(grid: VoxelGrid, rso, camera_fn: dict, servicer_rtn: np.ndarray):
+def draw_spacecraft(ax, position, direction, color="gray", scale_factor=1.5):
     """
-    Simulates an observation from a servicer at given RTN position.
-    Updates the voxel grid belief according to hits/misses.
-    """
-    camera_pos = servicer_rtn[-1] if servicer_rtn.ndim > 1 else servicer_rtn
-    view_dir = -camera_pos / np.linalg.norm(camera_pos)
-
-    rays = get_camera_rays(camera_pos, view_dir, camera_fn['fov_degrees'], camera_fn['sensor_res'])
-
-    all_hit_voxels, all_missed_voxels = set(), set()
-    for ray_dir in rays:
-        hit_voxel_idx, status, missed_list = _trace_ray(
-            camera_pos, ray_dir, grid, rso, camera_fn['noise_params']
-        )
-        all_missed_voxels.update(missed_list)
-        if status == 'hit':
-            all_hit_voxels.add(hit_voxel_idx)
-
-    grid.update_belief(list(all_hit_voxels), list(all_missed_voxels))
-    return list(all_hit_voxels), list(all_missed_voxels)
-
-
-def draw_spacecraft(ax, position, direction, color="gray", scale=(6.0, 4.0, 3.0)):
-    """
-    Draws a simple rectangular-prism spacecraft centered at `position`,
-    oriented along `direction`.
+    Draws a spacecraft prism. 
+    Base dimensions ~ 4x2x2 meters. 
+    Default scale_factor=1.5 -> ~6x3x3 meters (Comparable to RSO which is ~8m).
     """
     direction = direction / np.linalg.norm(direction)
-
     global_z = np.array([0, 0, 1])
-    if np.allclose(np.abs(direction), global_z):
-        temp_up = np.array([0, 1, 0])
-    else:
-        temp_up = global_z
+    temp_up = np.array([0, 1, 0]) if np.allclose(np.abs(direction), global_z) else global_z
         
-    right = np.cross(direction, temp_up)
-    right /= np.linalg.norm(right)
+    right = np.cross(direction, temp_up); right /= np.linalg.norm(right)
+    up = np.cross(right, direction); up /= np.linalg.norm(up)
+
+    # Base dimensions in meters
+    L, W, H = 4.0, 2.0, 2.0 
     
-    up = np.cross(right, direction)
-    up /= np.linalg.norm(up)
+    L *= scale_factor
+    W *= scale_factor
+    H *= scale_factor
 
-    L, W, H = scale
-    scaled_direction_vec = direction * (L / 2)
-    scaled_right_vec = right * (W / 2)
-    scaled_up_vec = up * (H / 2)
+    d_vec = direction * (L / 2)
+    r_vec = right * (W / 2)
+    u_vec = up * (H / 2)
 
-    corners = np.array([
-        position + scaled_direction_vec + scaled_right_vec + scaled_up_vec,
-        position + scaled_direction_vec - scaled_right_vec + scaled_up_vec,
-        position + scaled_direction_vec - scaled_right_vec - scaled_up_vec,
-        position + scaled_direction_vec + scaled_right_vec - scaled_up_vec,
-        position - scaled_direction_vec + scaled_right_vec + scaled_up_vec,
-        position - scaled_direction_vec - scaled_right_vec + scaled_up_vec,
-        position - scaled_direction_vec - scaled_right_vec - scaled_up_vec,
-        position - scaled_direction_vec + scaled_right_vec - scaled_up_vec
+    c = np.array([
+        position + d_vec + r_vec + u_vec, position + d_vec - r_vec + u_vec,
+        position + d_vec - r_vec - u_vec, position + d_vec + r_vec - u_vec,
+        position - d_vec + r_vec + u_vec, position - d_vec - r_vec + u_vec,
+        position - d_vec - r_vec - u_vec, position - d_vec + r_vec - u_vec
     ])
 
-    faces = [
-        [corners[0], corners[1], corners[2], corners[3]],
-        [corners[4], corners[5], corners[6], corners[7]],
-        [corners[0], corners[3], corners[7], corners[4]],
-        [corners[1], corners[2], corners[6], corners[5]],
-        [corners[0], corners[1], corners[5], corners[4]],
-        [corners[3], corners[2], corners[6], corners[7]]
-    ]
+    faces = [[c[0], c[1], c[2], c[3]], [c[4], c[5], c[6], c[7]], 
+             [c[0], c[3], c[7], c[4]], [c[1], c[2], c[6], c[5]], 
+             [c[0], c[1], c[5], c[4]], [c[3], c[2], c[6], c[7]]]
 
-    box = Poly3DCollection(faces, facecolors=color, linewidths=0.3, edgecolors="k", alpha=0.9)
+    box = Poly3DCollection(faces, facecolors=color, linewidths=0.5, edgecolors="k", alpha=1.0)
     ax.add_collection3d(box)
     return box
 
-
-def plot_scenario(grid: VoxelGrid, rso: GroundTruthRSO, camera_pos_world: np.ndarray, 
-                  view_direction: np.ndarray, fov_degrees: float, sensor_res: tuple,
-                  fig=None, ax=None):
+def plot_scenario(grid, rso, camera_pos_world, view_direction, fov_degrees, sensor_res, fig=None, ax=None):
     """
-    Generates or updates a 3D plot of the ground truth, belief state, and camera.
-    Returns: fig, ax, artists_dict (containing artists to be updated)
+    Initialize the plot artists.
     """
-    
-    initial_plot = (fig is None or ax is None)
-    
-    if initial_plot:
+    if fig is None:
         fig = plt.figure(figsize=(15, 12))
         ax = fig.add_subplot(111, projection='3d')
         ax.grid(True)
-        ax.set_xlabel('X (m)')
-        ax.set_ylabel('Y (m)')
-        ax.set_zlabel('Z (m)')
-        ax.set_title('RSO Characterization Mission: Simulated Observation', fontsize=16)
+        ax.set_xlabel('R [m]')
+        ax.set_ylabel('T [m]')
+        ax.set_zlabel('N [m]')
+        ax.set_title('RSO Characterization Mission', fontsize=16)
 
         artists = {}
 
-        # Plot Bounding Box
-        min_c = grid.origin
-        max_c = grid.max_bound
-        corners = np.array([
-            [min_c[0], min_c[1], min_c[2]], [max_c[0], min_c[1], min_c[2]],
-            [max_c[0], max_c[1], min_c[2]], [min_c[0], max_c[1], min_c[2]],
-            [min_c[0], min_c[1], max_c[2]], [max_c[0], min_c[1], max_c[2]],
-            [max_c[0], max_c[1], max_c[2]], [min_c[0], max_c[1], max_c[2]]
-        ])
-        edges = [
-            (0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
-            (0, 4), (1, 5), (2, 6), (3, 7)
-        ]
-        bb_lines = []
-        for (i, j) in edges:
-            line, = ax.plot([corners[i, 0], corners[j, 0]], [corners[i, 1], corners[j, 1]], 
-                             [corners[i, 2], corners[j, 2]], c='gray', linestyle=':', linewidth=1)
-            bb_lines.append(line)
-        artists['bb_lines'] = bb_lines
-        ax.plot([], [], [], c='gray', linestyle=':', label='Grid Bounding Box')
+        # REMOVED: Grid Bounding Box lines
 
-        # Plot Ground Truth (Hidden Surface Outline)
+        # 1. Servicer Path Line (Starts Empty)
+        artists['servicer_path_line'], = ax.plot([], [], [], 
+                                                 c='blue', ls='-', lw=1.5, alpha=0.6, label='Trajectory')
+
+        # 2. Burn Markers
+        artists['burn_scatter'] = ax.scatter([], [], [], c='orange', marker='^', s=150, label='Maneuver', zorder=10)
+
+        # 3. Servicer Spacecraft
+        artists['servicer_prism'] = draw_spacecraft(ax, camera_pos_world, view_direction, scale_factor=1.5)
+        ax.plot([], [], [], color='gray', marker='s', markersize=10, linestyle='None', label='Servicer')
+        
+        # 4. FOV Lines (Thicker, Magenta for visibility)
+        artists['fov_lines'] = [ax.plot([], [], [], c='magenta', ls='-', lw=2.0, label='Camera FOV' if i==0 else None)[0] for i in range(8)]
+
+        # 5. View Direction Line (Deep Green, thick)
+        artists['view_line'] = ax.plot([], [], [], c='darkgreen', ls='--', lw=2.5, label='View Direction')[0]
+        
+        # 6. Belief Scatter
+        artists['belief_scatter'] = ax.scatter([], [], [], c='green', marker='s', s=30, label='Belief (P>0.7)', depthshade=True)
+        
+        # 7. Ground Truth (Wireframe)
         truth_filled_voxels = np.argwhere(rso.shape)
+        gt_lines = []
+        
+        # (Ground truth drawing logic unchanged for brevity, kept same as previous)
         exposed_faces = [] 
         padded_shape = np.pad(rso.shape, pad_width=1, mode='constant', constant_values=False)
         for x, y, z in truth_filled_voxels:
@@ -527,14 +266,13 @@ def plot_scenario(grid: VoxelGrid, rso: GroundTruthRSO, camera_pos_world: np.nda
                 origin_voxel + [size, 0, size], origin_voxel + [0, size, size], 
                 origin_voxel + [size, size, size]
             ]
-            if face_dir == 0: face_verts.append([c[1], c[4], c[7], c[5]]) # +X
-            elif face_dir == 1: face_verts.append([c[0], c[3], c[6], c[2]]) # -X
-            elif face_dir == 2: face_verts.append([c[2], c[4], c[7], c[6]]) # +Y
-            elif face_dir == 3: face_verts.append([c[0], c[1], c[5], c[3]]) # -Y
-            elif face_dir == 4: face_verts.append([c[3], c[5], c[7], c[6]]) # +Z
-            elif face_dir == 5: face_verts.append([c[0], c[1], c[4], c[2]]) # -Z
+            if face_dir == 0: face_verts.append([c[1], c[4], c[7], c[5]]) 
+            elif face_dir == 1: face_verts.append([c[0], c[3], c[6], c[2]])
+            elif face_dir == 2: face_verts.append([c[2], c[4], c[7], c[6]]) 
+            elif face_dir == 3: face_verts.append([c[0], c[1], c[5], c[3]]) 
+            elif face_dir == 4: face_verts.append([c[3], c[5], c[7], c[6]]) 
+            elif face_dir == 5: face_verts.append([c[0], c[1], c[4], c[2]]) 
 
-        gt_lines = []
         if face_verts:
             edges_set = set()
             for face in face_verts:
@@ -544,127 +282,92 @@ def plot_scenario(grid: VoxelGrid, rso: GroundTruthRSO, camera_pos_world: np.nda
                 edges_set.add(tuple(sorted((tuple(p3), tuple(p4)))))
                 edges_set.add(tuple(sorted((tuple(p4), tuple(p1)))))
             
-            for p1_tuple, p2_tuple in edges_set:
-                p1 = np.array(p1_tuple)
-                p2 = np.array(p2_tuple)
+            for idx, (p1_tuple, p2_tuple) in enumerate(edges_set):
+                p1 = np.array(p1_tuple); p2 = np.array(p2_tuple)
+                label = 'Ground Truth' if idx == 0 else None
                 line, = ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], 
-                                 color=(1.0, 0.6, 0.6), linewidth=0.5, alpha=0.5)
+                                 color=(1.0, 0.6, 0.6), linewidth=0.8, alpha=0.6, label=label)
                 gt_lines.append(line)
         artists['gt_lines'] = gt_lines
-        ax.plot([], [], [], color=(1.0, 0.6, 0.6), linestyle='-', alpha=0.5, markersize=10, label='Ground Truth (Hidden Surface)')
-        
-        artists['belief_scatter'] = ax.scatter([], [], [], c='green', marker='o', s=50, label='Belief Voxels (P > 0.7)', depthshade=False)
-        
-        artists['servicer_path_line'], = ax.plot([camera_pos_world[0]], [camera_pos_world[1]], [camera_pos_world[2]], 
-                                                 c='blue', linestyle='-', linewidth=2, alpha=0.5, label='Servicer Path')
 
-        artists['servicer_prism'] = draw_spacecraft(ax, camera_pos_world, view_direction, color="gray", scale=(6.0, 4.0, 3.0))
-        ax.plot([], [], [], 
-        color='gray', 
-        marker='s',        
-        markersize=8,      
-        linestyle='None',  
-        label='Servicer Camera (Agent)')
+        artists['entropy_text'] = ax.text2D(0.05, 0.95, "", transform=ax.transAxes, fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
         
-        artists['view_line'] = ax.plot([], [], [], c='green', linestyle='--', linewidth=2, label='Viewing Direction (to CoM)')[0]
-        artists['fov_lines'] = [ax.plot([], [], [], c='cyan', linestyle=':', linewidth=1)[0] for _ in range(8)] 
-        artists['entropy_text'] = ax.text2D(0.05, 0.95, f"Entropy: {grid.get_entropy():.2f}", transform=ax.transAxes, fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
-        
-        ax.legend()
-        ax.view_init(elev=20, azim=-60) 
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
-
-        # Axis limits will be set by the calling function (create_visualization_frames)
-
+        ax.legend(loc='upper right', fontsize='small')
         return fig, ax, artists
+    return fig, ax, None
 
+def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees, sensor_res, noise_params, ax, artists, target_com, burn_indices=None):
+    """
+    Updates the plot for the given frame.
+    """
+    if frame >= len(camera_positions): return []
+
+    cam_pos = camera_positions[frame]
+    view_dir = view_directions[frame]
+   
+    # 1. Update Belief Scatter
+    mask = (grid.belief > 0.7)
+    indices = np.argwhere(mask)
+    if indices.size > 0:
+        world = grid.grid_to_world_coords(indices)
+        probs = grid.belief[indices[:,0], indices[:,1], indices[:,2]]
+        colors = np.array([[0.0, 1.0, 0.0, a] for a in np.clip(probs * 1.5 - 0.5, 0.3, 1.0)])
+        artists['belief_scatter']._offsets3d = (world[:, 0], world[:, 1], world[:, 2])
+        artists['belief_scatter'].set_facecolors(colors)
     else:
-        return fig, ax, artists
+        artists['belief_scatter']._offsets3d = ([], [], [])
 
+    # 2. Update Servicer Path (Growing Line)
+    # Draw from start (0) to current (frame + 1) to show history
+    path_x = camera_positions[:frame+1, 0]
+    path_y = camera_positions[:frame+1, 1]
+    path_z = camera_positions[:frame+1, 2]
+    artists['servicer_path_line'].set_data_3d(path_x, path_y, path_z)
 
-# --- MODIFIED update_plot FUNCTION ---
+    # 3. Update Burn Markers
+    if burn_indices:
+        past_burns = [b_idx for b_idx in burn_indices if b_idx <= frame]
+        if past_burns:
+            burn_x = camera_positions[past_burns, 0]
+            burn_y = camera_positions[past_burns, 1]
+            burn_z = camera_positions[past_burns, 2]
+            artists['burn_scatter']._offsets3d = (burn_x, burn_y, burn_z)
+        else:
+            artists['burn_scatter']._offsets3d = ([], [], [])
 
-def update_plot(frame, grid, rso, camera_positions, view_directions, 
-                fov_degrees, sensor_res, noise_params, ax, artists, target_com_world):
-    """ Animation update function. This function only plots, it does NOT update the grid belief. """
+    # 4. Update Spacecraft
+    artists['servicer_prism'].remove()
+    # Use Fixed Scaling (1.5 -> ~6m) to keep it visible but not huge
+    artists['servicer_prism'] = draw_spacecraft(ax, cam_pos, view_dir, scale_factor=1.5)
     
-    if frame >= len(camera_positions):
-        return []
+    # 5. Update View Direction Line
+    artists['view_line'].set_data_3d([cam_pos[0], target_com[0]], [cam_pos[1], target_com[1]], [cam_pos[2], target_com[2]])
+    
+    # 6. Update FOV Lines
+    global_up = np.array([0, 0, 1])
+    if np.allclose(np.abs(view_dir), global_up): global_up = np.array([0, 1, 0])
+    right = np.cross(view_dir, global_up); right /= np.linalg.norm(right)
+    up = np.cross(right, view_dir)
+    
+    fov_rad = np.deg2rad(fov_degrees)
+    ar = sensor_res[0]/sensor_res[1]
+    h_half = np.tan(fov_rad/2)
+    w_half = h_half * ar
+    
+    dist = np.linalg.norm(cam_pos - target_com)
+    corners = [np.array([-1,-1]), np.array([1,-1]), np.array([1,1]), np.array([-1,1])]
+    pts = []
+    for u,v in corners:
+        d = (view_dir + right*u*w_half + up*v*h_half)
+        d /= np.linalg.norm(d)
+        pts.append(cam_pos + d * dist)
+        
+    for i in range(4):
+        artists['fov_lines'][i].set_data_3d([cam_pos[0], pts[i][0]], [cam_pos[1], pts[i][1]], [cam_pos[2], pts[i][2]])
+    pts.append(pts[0])
+    for i in range(4):
+        artists['fov_lines'][4+i].set_data_3d([pts[i][0], pts[i+1][0]], [pts[i][1], pts[i+1][1]], [pts[i][2], pts[i+1][2]])
 
-    camera_pos_world = camera_positions[frame]
-    view_direction = view_directions[frame]
-
-    # --- Update Artists ---
-    belief_scatter = artists['belief_scatter']
-    servicer_prism = artists['servicer_prism']
-    servicer_path_line = artists['servicer_path_line']
-    view_line = artists['view_line']
-    fov_lines = artists['fov_lines']
-    entropy_text = artists['entropy_text']
-
-    # --- Ensure belief is a NumPy array for plotting ---
-    if TORCH_AVAILABLE and isinstance(grid.belief, torch.Tensor):
-        belief_np = grid.belief.detach().cpu().numpy()
-    else:
-        belief_np = grid.belief
-
-    # Update belief scatter using belief_np
-    certain_mask = (belief_np > 0.7)
-    certain_indices = np.argwhere(certain_mask)
-    if certain_indices.size > 0:
-        certain_world = grid.grid_to_world_coords(certain_indices)
-        certain_probabilities = belief_np[
-            certain_indices[:, 0],
-            certain_indices[:, 1],
-            certain_indices[:, 2]
-        ]
-        alphas = np.clip(certain_probabilities * 1.5 - 0.5, 0.3, 1.0)
-        colors = np.array([[0.0, 1.0, 0.0, a] for a in alphas])
-
-        belief_scatter._offsets3d = (
-            certain_world[:, 0],
-            certain_world[:, 1],
-            certain_world[:, 2],
-        )
-        belief_scatter.set_facecolors(colors)
-    else:
-        belief_scatter._offsets3d = ([], [], [])
-        belief_scatter.set_facecolors([])
-
-    # Servicer path
-    cam_hist = np.array(camera_positions[:frame+1])
-    servicer_path_line.set_data_3d(
-        cam_hist[:, 0],
-        cam_hist[:, 1],
-        cam_hist[:, 2],
-    )
-
-    # Servicer pose
-    servicer_prism.remove()
-    servicer_prism = draw_spacecraft(
-        ax,
-        camera_pos_world,
-        view_direction,
-        color="gray",
-        scale=(6.0, 4.0, 3.0),
-    )
-    artists['servicer_prism'] = servicer_prism
-
-    # View line
-    view_line.set_data_3d(
-        [camera_pos_world[0], target_com_world[0]],
-        [camera_pos_world[1], target_com_world[1]],
-        [camera_pos_world[2], target_com_world[2]],
-    )
-
-    # FOV lines unchanged, entropy text:
-    entropy_text.set_text(f"Entropy: {grid.get_entropy():.2f}")
-
-    return [
-        belief_scatter,
-        servicer_prism,
-        servicer_path_line,
-        view_line,
-        *fov_lines,
-        entropy_text,
-    ]
+    artists['entropy_text'].set_text(f"Entropy: {grid.get_entropy():.2f}")
+    
+    return [artists['belief_scatter'], artists['servicer_path_line'], artists['servicer_prism']]

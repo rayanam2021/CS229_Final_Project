@@ -1,47 +1,75 @@
-import json
 import os
+import json
 import numpy as np
-
-from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
 from datetime import datetime
+from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
+
+def get_dimensionless_roe(roe_meters, a_chief_km):
+    """
+    Converts ROE components defined in meters into the dimensionless
+    Quasi-Nonsingular ROE state vector required for propagation.
+    """
+    a_chief_m = a_chief_km * 1000.0
+
+    # Extract keys safely
+    da = roe_meters.get('da', 0.0)
+    dl = roe_meters.get('dl', 0.0)
+    dex = roe_meters.get('dex', 0.0)
+    dey = roe_meters.get('dey', 0.0)
+    dix = roe_meters.get('dix', 0.0)
+    diy = roe_meters.get('diy', 0.0)
+
+    vec_meters = np.array([da, dl, dex, dey, dix, diy], dtype=float)
+    return vec_meters / a_chief_m
 
 def load_config(path="config.json"):
     with open(path, "r") as f:
         cfg = json.load(f)
-        cfg["timestamp"] = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")     # just to know when analyzing results
+        cfg["timestamp"] = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
         return cfg
 
 if __name__ == "__main__":
-    # You can set parameters here, or use defaults from scenario_full_mcts.py
-    cfg = load_config("config.json")
+    # 1. Load Configuration
+    config_path = "config.json"
+    if not os.path.exists(config_path):
+        print(f"Error: {config_path} not found. Please create it first.")
+        exit(1)
+        
+    config = load_config(config_path)
 
-    # if "seed" in cfg:
-    #     np.random.seed(cfg["seed"])
-    
-    OUT_FOLDER = os.path.join("output", cfg.get("run_id"))#, cfg.get("timestamp"))
-    os.makedirs(OUT_FOLDER, exist_ok=True)
+    # 2. Extract sections
+    sim_conf = config['simulation']
+    orbit_conf = config['orbit']
+    cam_conf = config['camera']
+    roe_meters = config['initial_roe_meters']
 
+    # 3. Process Initial State (Meters -> Dimensionless)
+    a_chief_km = orbit_conf['a_chief_km']
+    initial_roe_dimless = get_dimensionless_roe(roe_meters, a_chief_km)
+
+    print("="*50)
+    print(f"Initializing Simulation from {config_path}")
+    print(f"Orbit: a={a_chief_km} km, i={orbit_conf['i_chief_deg']} deg")
+    print(f"Initial ROE (Meters): {list(roe_meters.values())}")
+    print(f"Initial ROE (Dimless): {np.round(initial_roe_dimless, 6)}")
+    print("="*50)
+
+    # 4. Setup Output Directory
+    timestamp = config.get("timestamp", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    base_out = sim_conf.get("output_dir", "output")
+    out_folder = os.path.join(base_out, timestamp)
+    os.makedirs(out_folder, exist_ok=True)
+
+    # 5. Run Simulation
     run_orbital_camera_sim_full_mcts(
-        num_steps    = cfg.get("num_steps"),
-        time_step    = cfg.get("time_step"),
-        horizon      = cfg.get("horizon"),
-        mcts_iters   = cfg.get("mcts_iters"),
-        mcts_c       = cfg.get("mcts_c"),  # exploration constant
-        mcts_gamma   = cfg.get("gamma"),
-        alpha_dv     = cfg.get("alpha_dv"),
-        beta_tan     = cfg.get("beta_tan"),
-        target_radius = cfg.get("target_radius"),
-        gamma_r     = cfg.get("gamma_r"),
-        r_min_rollout = cfg.get("r_min_rollout"),
-        r_max_rollout = cfg.get("r_max_rollout"),
-        verbose      = cfg.get("verbose", True),
-        visualize    = cfg.get("visualize", True),
-        lambda_dv    = cfg.get("lambda_dv"),
-        use_torch_grid = cfg.get("use_torch_grid"),
-        grid_device    = cfg.get("grid_device"),
-        out_folder   = OUT_FOLDER
+        sim_config=sim_conf,
+        orbit_params=orbit_conf,
+        camera_params=cam_conf,
+        initial_state_roe=initial_roe_dimless,
+        out_folder=out_folder
     )
 
-    with open(os.path.join(OUT_FOLDER, "config.json"), "w") as f:
-        json.dump(cfg, f, indent=4)
+    # Save a copy of the config used for this run
+    with open(os.path.join(out_folder, "run_config.json"), "w") as f:
+        json.dump(config, f, indent=4)

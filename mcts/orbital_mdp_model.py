@@ -4,9 +4,10 @@ from roe.dynamics import apply_impulsive_dv
 from camera.camera_observations import simulate_observation, calculate_entropy, VoxelGrid
 
 class OrbitalState:
-    def __init__(self, roe, grid):
+    def __init__(self, roe, grid, time):
         self.roe = np.array(roe, dtype=float)
         self.grid = grid
+        self.time = time # Track absolute time in the state
 
 
 class OrbitalMCTSModel:
@@ -49,46 +50,59 @@ class OrbitalMCTSModel:
         return actions
 
     def step(self, state, action):
-        # 1) propagate orbital state from state.roe
-        tspan0 = np.array([0.0])
+        # 1) Apply Impulse
+        # Use state.time for the maneuver epoch (absolute time)
+        t_burn = np.array([state.time])
+        
         child_state_impulse = apply_impulsive_dv(
-            state.roe, action, self.a_chief, self.n_chief, tspan0
+            state.roe, action, self.a_chief, self.n_chief, t_burn,
+            e=self.e_chief, i=self.i_chief, omega=self.omega_chief
         )
 
+        # 2) Propagate
+        # We propagate forward by one time_step from the current state.time
+        # The target absolute time is state.time + time_step
+        next_time = state.time + self.time_step
+        t_target = np.array([next_time])
+        
         rho_rtn_child, rhodot_rtn_child = propagateGeomROE(
             child_state_impulse,
             self.a_chief, self.e_chief, self.i_chief,
             self.omega_chief, self.n_chief,
-            np.array([self.time_step])
+            t_target,
+            t0=state.time
         )
 
         pos_child = rho_rtn_child[:, 0] * 1000.0  # m
 
+        # 3) Convert back to ROE
+        # Convert at the NEW absolute time
         next_roe = np.array(
             rtn_to_roe(
                 rho_rtn_child[:, 0],
                 rhodot_rtn_child[:, 0],
                 self.a_chief,
                 self.n_chief,
-                tspan0
+                t_target
             )
         )
 
-        # 2) update voxel grid belief (deep copy branch-specific grid)
-        #    Use the grid's own clone() so we preserve numpy/torch backend and device.
-        grid = state.grid.clone()
+        # 4) Update Belief (deep copy branch-specific grid)
+        grid = VoxelGrid(self.grid_dims)
+        grid.belief[:]    = state.grid.belief[:]     # copy from current state
+        grid.log_odds[:]  = state.grid.log_odds[:]
 
-        entropy_before = grid.get_entropy()
+        entropy_before = calculate_entropy(grid.belief)
         simulate_observation(grid, self.rso, self.camera_fn, pos_child)
-        entropy_after = grid.get_entropy()
+        entropy_after = calculate_entropy(grid.belief)
 
         info_gain = entropy_before - entropy_after
         dv_cost   = float(np.linalg.norm(action))
 
         reward = info_gain - self.lambda_dv * dv_cost
 
-        # 3) pack ROE and belief into a new OrbitalState
-        next_state = OrbitalState(roe=next_roe, grid=grid)
+        # 5) Pack ROE, belief, and new time into OrbitalState
+        next_state = OrbitalState(roe=next_roe, grid=grid, time=next_time)
 
         return next_state, reward
 

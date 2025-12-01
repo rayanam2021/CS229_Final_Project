@@ -1,75 +1,65 @@
 import numpy as np
+from roe.propagation import ROEDynamics
 
 def apply_impulsive_dv(state_roe: np.ndarray, 
                        dv_rtn: np.ndarray, 
                        a_chief: float, 
                        n: float, 
-                       tspan: np.ndarray) -> np.ndarray:
+                       tspan: np.ndarray,
+                       e: float = 0.001,
+                       i: float = 1.71,
+                       omega: float = 0.0) -> np.ndarray:
     """
     Calculates the new ROE state after applying an impulsive Δv.
 
-    This function uses Gauss's Variational Equations (GVEs) adapted for
-    Relative Orbital Elements (ROEs) on a near-circular orbit. It maps an
-    instantaneous change in velocity (Δv) in the RTN frame to an
-    instantaneous change in the ROE state vector.
+    Uses the control matrix derived from Gauss Variational Equations 
+    (via ROEDynamics class) to map RTN velocity changes to ROE changes.
 
     Parameters
     ----------
     state_roe : np.ndarray
-        The current (old) ROE state vector [da, dlambda, dex, dey, dix, diy].
+        Current ROE state vector [da, dlambda, dex, dey, dix, diy].
     dv_rtn : np.ndarray
-        The impulsive velocity change to apply [Δv_r, Δv_t, Δv_n] in m/s.
+        Impulsive velocity change [Δv_r, Δv_t, Δv_n] in m/s.
     a_chief : float
         Chief semi-major axis in km.
     n : float
         Chief mean motion in rad/s.
     tspan : np.ndarray
-        The propagation time in seconds. Used to calculate the
-        mean anomaly (M) at the time of the impulse.
+        Array containing the absolute time of the maneuver at index 0.
+        Used to calculate True Anomaly (f).
+    e : float
+        Eccentricity (default 0.001 near-circular)
+    i : float
+        Inclination in radians (default ~98 deg)
+    omega : float
+        Argument of perigee in radians (default 0.0)
 
     Returns
     -------
     np.ndarray
-        The new ROE state vector after the impulse.
+        New ROE state vector.
     """
     
-    # --- 1. Unpack Inputs ---
-    da_old, dl_old, dex_old, dey_old, dix_old, diy_old = state_roe
+    # 1. Initialize Dynamics Model with full orbital parameters
+    model = ROEDynamics(a_chief, e, i, omega)
     
-    dv_rtn_kms = dv_rtn
-    dv_r, dv_t, dv_n = dv_rtn_kms
-
-    # --- 2. Calculate Mean Anomaly (M) ---
-    # We assume M0=0 at t=0. 'M' is the orbital position where
-    # the impulse is applied.
-    M = n * tspan[0]
-    cos_M = np.cos(M)
-    sin_M = np.sin(M)
-
-    # --- 3. Calculate Instantaneous Change in ROEs (via GVEs) ---
-    # These equations map [dv_r, dv_t, dv_n] to [Δda, Δdlambda, ...]
+    # 2. Determine True Anomaly (f) at time of burn
+    # Assuming M ~ f for near-circular context if propagation is purely mean-anomaly based
+    time_of_burn = tspan[0]
+    f_burn = n * time_of_burn
     
-    # Change in relative semi-major axis (da)
-    delta_da = (2.0 / n) * dv_t
-
-    # Change in relative mean longitude (dlambda)
-    delta_dl = (-2.0 / (n * a_chief)) * dv_r
-
-    # Change in relative eccentricity vector (dex, dey)
-    delta_dex = (sin_M / (n * a_chief)) * dv_r + (2.0 * cos_M / (n * a_chief)) * dv_t
-    delta_dey = (-cos_M / (n * a_chief)) * dv_r + (2.0 * sin_M / (n * a_chief)) * dv_t
+    # 3. Calculate Change using Control Matrix
+    # Convert m/s to km/s because 'a_chief' is in km and 'n' is rad/s
+    dv_km_s = dv_rtn / 1000.0
     
-    # Change in relative inclination vector (dix, diy)
-    delta_dix = (cos_M / (n * a_chief)) * dv_n
-    delta_diy = (sin_M / (n * a_chief)) * dv_n
+    # Get Gamma (Control Matrix) from the model
+    # The matrix B returned by model is scaled by 1/(na).
+    Gamma = model.get_control_matrix(f_burn)
     
-    # --- 4. Calculate New ROE State ---
-    # The new state is the old state plus the instantaneous change
-    da_new    = da_old    + delta_da
-    dl_new    = dl_old    + delta_dl
-    dex_new   = dex_old   + delta_dex
-    dey_new   = dey_old   + delta_dey
-    dix_new   = dix_old   + delta_dix
-    diy_new   = diy_old   + delta_diy
-
-    return [da_new, dl_new, dex_new, dey_new, dix_new, diy_new]
+    delta_roe = Gamma @ dv_km_s
+    
+    # 4. Apply Change
+    new_roe = state_roe + delta_roe
+    
+    return new_roe
