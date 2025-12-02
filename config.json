@@ -1,7 +1,6 @@
 {
     "simulation": {
-        "run_id": "random_start",
-        "max_horizon": 3,
+        "run_id": "random_policy_1",
         "num_steps": 10,
         "time_step": 30.0,
         "verbose": true,
@@ -12,13 +11,14 @@
         "grid_device": "cuda"
     },
     "mcts": {
-    "mcts_iters": 1000,
-    "mcts_c": 1.4,
-    "gamma": 0.95,
-    "horizon": 20,
-    "lambda_dv": 0.01,
-    "alpha_dv": 60.0,
-    "beta_tan": 0.1
+        "max_horizon": 20,
+        "desired_rollout_policy":"random",
+        "mcts_iters": 1000,
+        "mcts_c": 1.4,
+        "gamma": 0.95,
+        "lambda_dv": 0.01,
+        "alpha_dv": 60.0,
+        "beta_tan": 0.1
     },
     "orbit": {
         "mu_earth": 398600.4418,

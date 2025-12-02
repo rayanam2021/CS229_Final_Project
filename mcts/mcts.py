@@ -31,13 +31,15 @@ class Node:
 
         self.reward = reward  # reward for getting to this node
 
+
 class MCTS:
-    def __init__(self, model, iters=1000, max_depth=5, c=1.4, gamma=1.0):
+    def __init__(self, model, iters=1000, max_depth=5, c=1.4, gamma=1.0, roll_policy="random"):
         self.max_path_searches = iters
         self.max_depth = max_depth
         self.c = c
         self.gamma = gamma
         self.mdp = model
+        self.des_rollout_policy = roll_policy
 
     def get_best_root_action(self, root_state, step, out_folder, return_stats=True):
         root_actions = self.mdp.actions(root_state)
@@ -103,7 +105,11 @@ class MCTS:
             if not actions:
                 break  # terminal
 
-            action = self.mdp.rollout_policy(state)
+            if(self.des_rollout_policy == "random"):
+                action = self.mdp.random_rollout_policy(state)
+            else:
+                action = self.mdp.custom_rollout_policy(state)
+
             next_state, reward = self.mdp.step(state, action)
 
             total_return += discount * reward

@@ -103,10 +103,7 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, in
     grid_device = sim_config.get('grid_device', 'cpu')
     alpha_dv = sim_config.get('alpha_dv', 1.0)
     beta_tan = sim_config.get('beta_tan', 1.0)
-    target_radius = sim_config.get('target_radius', 50.0)
-    gamma_r = sim_config.get('gamma_r', 0.99)
-    r_min_rollout = sim_config.get('r_min_rollout', 0.0)
-    r_max_rollout = sim_config.get('r_max_rollout', 100.0)
+    rollout_policy = sim_config.get('desired_rollout_policy', "random")
     lambda_dv = sim_config.get('lambda_dv', 1.0)
     mcts_iters = sim_config.get('mcts_iters', 3000)
     mcts_c = sim_config.get('mcts_c', 1.4)
@@ -135,8 +132,7 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, in
     
     controller = MCTSController(mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
                                 time_step=time_step, horizon=horizon, alpha_dv=alpha_dv, beta_tan=beta_tan,
-                                target_radius=target_radius, gamma_r=gamma_r, r_min_rollout=r_min_rollout,
-                                r_max_rollout=r_max_rollout, lambda_dv=lambda_dv, branching_factor=13,
+                                rollout_policy=rollout_policy, lambda_dv=lambda_dv, branching_factor=13,
                                 num_workers=None, mcts_iters=mcts_iters, mcts_c=mcts_c, gamma=gamma)
 
     state = initial_state_roe

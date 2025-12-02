@@ -13,7 +13,6 @@ class OrbitalState:
 class OrbitalMCTSModel:
     def __init__(self, a_chief, e_chief, i_chief, omega_chief, n_chief,
                  rso, camera_fn, grid_dims, lambda_dv, time_step, max_depth,
-                 target_radius, gamma_r, r_min_rollout, r_max_rollout,
                  alpha_dv=10, beta_tan=0.5, grid=None):
 
         self.a_chief = a_chief
@@ -32,10 +31,6 @@ class OrbitalMCTSModel:
 
         self.alpha_dv = alpha_dv
         self.beta_tan = beta_tan
-        self.target_radius=target_radius
-        self.gamma_r=gamma_r
-        self.r_min_rollout=r_min_rollout
-        self.r_max_rollout=r_max_rollout
 
     def actions(self, state):
         delta_v_small = 0.01
@@ -106,13 +101,13 @@ class OrbitalMCTSModel:
 
         return next_state, reward
 
-    # def rollout_policy(self, state):
-    #     actions = self.actions(state)
-    #     n = len(actions)
-    #     idx = np.random.randint(n)
-    #     return actions[idx]
+    def random_rollout_policy(self, state):
+        actions = self.actions(state)
+        n = len(actions)
+        idx = np.random.randint(n)
+        return actions[idx]
 
-    def rollout_policy(self, state):
+    def custom_rollout_policy(self, state):
         """
         Heuristic rollout policy:
         - Prefer smaller |dv|

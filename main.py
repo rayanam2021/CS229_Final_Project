@@ -48,11 +48,23 @@ if __name__ == "__main__":
     a_chief_km = orbit_conf['a_chief_km']
     initial_roe_dimless = get_dimensionless_roe(roe_meters, a_chief_km)
 
+    # Add random noise to initial position (uniform distribution)
+    seed = sim_conf.get('seed', 0)
+    np.random.seed(seed)
+    noise_range = 10.0  # meters, uniform in [-noise_range, +noise_range]
+    roe_meters_noisy = roe_meters.copy()
+    for key in ['da', 'dl']:  # Only perturb distance components
+        roe_meters_noisy[key] += np.random.uniform(-noise_range, noise_range)
+
+    initial_roe_dimless_noisy = get_dimensionless_roe(roe_meters_noisy, a_chief_km)
+
     print("="*50)
     print(f"Initializing Simulation from {config_path}")
     print(f"Orbit: a={a_chief_km} km, i={orbit_conf['i_chief_deg']} deg")
     print(f"Initial ROE (Meters): {list(roe_meters.values())}")
+    print(f"Initial ROE with Noise (Meters): {[f'{v:.2f}' for v in roe_meters_noisy.values()]}")
     print(f"Initial ROE (Dimless): {np.round(initial_roe_dimless, 6)}")
+    print(f"Initial ROE with Noise (Dimless): {np.round(initial_roe_dimless_noisy, 6)}")
     print("="*50)
 
     # 4. Setup Output Directory
@@ -66,7 +78,7 @@ if __name__ == "__main__":
         sim_config=sim_conf,
         orbit_params=orbit_conf,
         camera_params=cam_conf,
-        initial_state_roe=initial_roe_dimless,
+        initial_state_roe=initial_roe_dimless_noisy,
         out_folder=out_folder
     )
 
