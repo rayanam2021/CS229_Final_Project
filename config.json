@@ -1,8 +1,8 @@
 {
     "simulation": {
         "max_horizon": 5,
-        "num_steps": 10,
-        "time_step": 30.0,
+        "num_steps": 50,
+        "time_step": 120.0,
         "verbose": false,
         "visualize": true,
         "output_dir": "output_training"
@@ -15,7 +15,7 @@
         "omega_chief_deg": 30.0
     },
     "control": {
-        "lambda_dv": 0.01
+        "lambda_dv": 0.001
     },
     "camera": {
         "fov_degrees": 10.0,
@@ -34,25 +34,25 @@
         "diy": 0.0
     },
     "monte_carlo": {
-        "num_episodes": 20,
+        "num_episodes": 10,
         "perturbation_bounds": {
             "da": 0.0,
-            "dl": 50.0,
-            "dex": 20.0,
-            "dey": 20.0,
-            "dix": 10.0,
-            "diy": 10.0
+            "dl": 5.0,
+            "dex": 2.0,
+            "dey": 2.0,
+            "dix": 1.0,
+            "diy": 1.0
         }
     },
     "network": {
         "hidden_dim": 128
     },
     "training": {
-        "batch_size": 32,
-        "learning_rate": 0.001,
-        "mcts_iters": 75,
+        "batch_size": 64,
+        "learning_rate": 0.0005,
+        "mcts_iters": 100,
         "epochs_per_cycle": 5,
-        "buffer_size": 10000,
+        "buffer_size": 20000,
         "c_puct": 1.4,
         "gamma": 0.99
     }

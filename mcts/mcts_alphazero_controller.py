@@ -41,9 +41,11 @@ class MCTSAlphaZeroCPU:
         # Add Dirichlet noise
         if root.is_expanded():
             actions = list(root.children.keys())
-            noise = np.random.dirichlet([0.3] * len(actions))
+            # Change 0.3 to something higher if you want more chaotic exploration
+            noise = np.random.dirichlet([0.5] * len(actions)) 
             for i, action_idx in enumerate(actions):
-                root.children[action_idx].prior = 0.75 * root.children[action_idx].prior + 0.25 * noise[i]
+                # Increase noise weight from 0.25 to 0.5 for early training
+                root.children[action_idx].prior = 0.5 * root.children[action_idx].prior + 0.5 * noise[i]
 
         for _ in range(self.n_iters):
             node = root

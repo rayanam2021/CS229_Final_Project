@@ -17,10 +17,20 @@ class PolicyValueNetwork(nn.Module):
     def forward(self, roe, grid):
         if grid.ndim == 4: grid = grid.unsqueeze(1)
         elif grid.ndim == 3: grid = grid.unsqueeze(0).unsqueeze(0)
+        
+        # --- FIX: Scale ROE inputs ---
+        # The ROE inputs are ~1e-5. We multiply by a large constant (e.g., 7000km in meters)
+        # to bring them to O(1) or O(100) range, which the network can learn from.
+        # You can use a fixed scalar like 10000.0 or pass 'a_chief' if available.
+        scaled_roe = roe * 10000.0 
+        
         x = F.relu(self.conv1(grid))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
         x = F.relu(self.fc_grid(x.view(x.size(0), -1)))
-        y = F.relu(self.fc_roe(roe))
+        
+        # Use scaled_roe here instead of roe
+        y = F.relu(self.fc_roe(scaled_roe)) 
+        
         shared = F.relu(self.fc_shared(torch.cat([x, y], dim=1)))
         return self.policy_head(shared), self.value_head(shared)
