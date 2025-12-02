@@ -22,10 +22,24 @@ if __name__ == "__main__":
     summary_path = "output/experiments/mcts_sweep_summary.csv"
     os.makedirs(os.path.dirname(summary_path), exist_ok=True)
 
-    results = []
+    # Load existing results if resuming
+    completed_runs = set()
+    if os.path.exists(summary_path):
+        existing_df = pd.read_csv(summary_path)
+        print(f"Found existing summary with {len(existing_df)} completed runs")
+        # Create set of completed run signatures to skip
+        for _, row in existing_df.iterrows():
+            run_signature = (row['mcts_iters'], row['mcts_c'], row['gamma'], row['max_horizon'], row['lambda_dv'], row['seed'])
+            completed_runs.add(run_signature)
+        results = existing_df.to_dict('records')
+    else:
+        print("Starting fresh sweep (no existing results found)")
+        results = []
+
     sweep_start_time = time.time()
     total_runs = len(mcts_iters_values) * len(mcts_c_values) * len(gamma_values) * len(max_horizon_values) * len(lambda_dv_values) * len(seeds)
     run_count = 0
+    skipped_count = 0
 
     for mcts_iters in mcts_iters_values:
         for mcts_c in mcts_c_values:
@@ -34,6 +48,15 @@ if __name__ == "__main__":
                     for lambda_dv in lambda_dv_values:
                         for seed in seeds:
                             run_count += 1
+
+                            # Check if this run has already been completed
+                            run_signature = (mcts_iters, mcts_c, gamma, max_horizon, lambda_dv, seed)
+                            if run_signature in completed_runs:
+                                skipped_count += 1
+                                print(f"\n⊘ Run {run_count}/{total_runs} SKIPPED (already completed)")
+                                print(f"  mcts_iters={mcts_iters}, mcts_c={mcts_c}, gamma={gamma}, horizon={max_horizon}, lambda_dv={lambda_dv}, seed={seed}")
+                                continue
+
                             out_dir = f"output/experiments/mcts_sweep/iters_{mcts_iters}_c_{mcts_c}_gamma_{gamma}_h_{max_horizon}_lam_{lambda_dv}_seed_{seed}"
                             os.makedirs(out_dir, exist_ok=True)
 
@@ -147,21 +170,34 @@ if __name__ == "__main__":
 
     print(f"\n\n{'='*70}")
     print(f"SWEEP COMPLETE!")
+    print(f"Runs executed: {run_count - skipped_count}/{total_runs} (skipped {skipped_count} already completed)")
+    print(f"Total results collected: {len(results)}")
     print(f"Total sweep time: {hours}h {minutes}m {seconds}s ({total_sweep_time:.2f} seconds)")
-    print(f"Average time per run: {total_sweep_time/len(results):.2f} seconds")
+    if run_count > skipped_count:
+        new_runs_count = run_count - skipped_count
+        new_runs_time = sum([r['elapsed_time_seconds'] for r in results[-new_runs_count:] if 'elapsed_time_seconds' in r])
+        print(f"Time for new runs: {new_runs_time:.2f} seconds")
+        print(f"Average time per run: {new_runs_time/new_runs_count:.2f} seconds")
     print(f"Summary saved to: {summary_path}")
     print(f"{'='*70}")
     print(results_df)
 
     # Also save timing summary to a text log file
     log_path = os.path.join(os.path.dirname(summary_path), "sweep_timing.log")
-    with open(log_path, "w") as f:
-        f.write(f"MCTS Comprehensive Sweep Timing Report\n")
+    with open(log_path, "a") as f:
+        f.write(f"\n{'='*70}\n")
+        f.write(f"MCTS Comprehensive Sweep - Resume Log Entry\n")
         f.write(f"{'='*70}\n")
-        f.write(f"Sweep end time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Total sweep time: {hours}h {minutes}m {seconds}s ({total_sweep_time:.2f} seconds)\n")
-        f.write(f"Number of runs: {len(results)}\n")
-        f.write(f"Average time per run: {total_sweep_time/len(results):.2f} seconds\n")
+        f.write(f"Sweep time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Runs executed in this session: {run_count - skipped_count}/{total_runs}\n")
+        f.write(f"Runs skipped (already completed): {skipped_count}\n")
+        f.write(f"Total results collected: {len(results)}\n")
+        f.write(f"Session time: {hours}h {minutes}m {seconds}s ({total_sweep_time:.2f} seconds)\n")
+        if run_count > skipped_count:
+            new_runs_count = run_count - skipped_count
+            new_runs_time = sum([r['elapsed_time_seconds'] for r in results[-new_runs_count:] if 'elapsed_time_seconds' in r])
+            f.write(f"Time for new runs: {new_runs_time:.2f} seconds\n")
+            f.write(f"Average time per new run: {new_runs_time/new_runs_count:.2f} seconds\n")
         f.write(f"{'='*70}\n\n")
         f.write(f"Parameter grid:\n")
         f.write(f"  mcts_iters: {mcts_iters_values}\n")

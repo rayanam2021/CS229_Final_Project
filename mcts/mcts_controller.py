@@ -15,12 +15,14 @@ from camera.camera_observations import calculate_entropy, simulate_observation, 
 
 from mcts.orbital_mdp_model import OrbitalMCTSModel, OrbitalState
 from mcts.mcts import MCTS
+from mcts.mcts_parallel import ParallelMCTS
 
 class MCTSController:
     
     def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
                  time_step, horizon, alpha_dv, beta_tan, rollout_policy,
-                 lambda_dv, branching_factor=13, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
+                 lambda_dv, branching_factor=13, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99,
+                 use_parallel_mcts=True, num_processes=None, verbose=False):
         """
         Args:
             mu_earth: Gravitational parameter
@@ -31,7 +33,9 @@ class MCTSController:
             time_step: Time step duration (seconds)
             horizon: Tree depth (number of decision levels)
             branching_factor: Number of actions per node (typically 13)
-            num_workers: (Not used in serial MCTS but kept for interface compatibility)
+            num_workers: (Deprecated, kept for compatibility)
+            use_parallel_mcts: Use ParallelMCTS (multiprocessing) instead of sequential MCTS (default: True)
+            num_processes: Number of processes for parallel MCTS (default: cpu_count())
         """
         self.mu_earth = mu_earth
         self.a_chief = a_chief
@@ -45,6 +49,9 @@ class MCTSController:
         self.num_workers = num_workers or max(1, cpu_count() - 1)
         self.replay_buffer = []
         self.lambda_dv = lambda_dv
+        self.use_parallel_mcts = use_parallel_mcts
+        self.num_processes = num_processes or cpu_count()
+        self.verbose = verbose
 
         self.model = OrbitalMCTSModel(
                     a_chief, e_chief, i_chief, omega_chief, n_chief,
@@ -57,14 +64,30 @@ class MCTSController:
                     beta_tan=beta_tan,
                 )
 
-        self.mcts = MCTS(
-            model=self.model,
-            iters=mcts_iters,
-            max_depth=horizon,
-            c=mcts_c,
-            gamma=gamma,
-            roll_policy=rollout_policy
-        )
+        # Instantiate MCTS based on parallel/sequential preference
+        if use_parallel_mcts:
+            if verbose:
+                print(f"Using ParallelMCTS with {self.num_processes} processes")
+            self.mcts = ParallelMCTS(
+                model=self.model,
+                iters=mcts_iters,
+                max_depth=horizon,
+                c=mcts_c,
+                gamma=gamma,
+                roll_policy=rollout_policy,
+                num_processes=self.num_processes
+            )
+        else:
+            if verbose:
+                print("Using sequential MCTS")
+            self.mcts = MCTS(
+                model=self.model,
+                iters=mcts_iters,
+                max_depth=horizon,
+                c=mcts_c,
+                gamma=gamma,
+                roll_policy=rollout_policy
+            )
 
 
     def select_action(self, state, time, tspan, grid, rso, camera_fn, step=0, verbose=False, out_folder=None):

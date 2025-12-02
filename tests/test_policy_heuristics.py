@@ -173,7 +173,7 @@ def test_sampling_distribution(num_samples=10000, alpha_dv=10.0, beta_tan=0.5):
     dv_norms = []
 
     for _ in range(num_samples):
-        a = model.rollout_policy(state)
+        a = model.custom_rollout_policy(state)
         idx = next(i for i, cand in enumerate(actions) if np.allclose(cand, a))
         action_counts[idx] += 1
 
