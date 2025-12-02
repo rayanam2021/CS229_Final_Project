@@ -1,38 +1,16 @@
-"""
-Standard MCTS Controller using orbital_mdp_model.
-"""
-
 import numpy as np
 import pandas as pd
 import os
-import copy
-from datetime import datetime
-from collections import defaultdict
-from multiprocessing import Pool, cpu_count
-from roe.propagation import propagateGeomROE, rtn_to_roe
-from roe.dynamics import apply_impulsive_dv
-from camera.camera_observations import calculate_entropy, simulate_observation, VoxelGrid
+from multiprocessing import cpu_count
 
 from mcts.orbital_mdp_model import OrbitalMCTSModel, OrbitalState
 from mcts.mcts import MCTS
 
 class MCTSController:
     
-    def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-                 time_step, horizon, alpha_dv, beta_tan, target_radius, gamma_r, r_min_rollout, r_max_rollout,
-                 lambda_dv, branching_factor=13, num_workers=None, mcts_iters=3000, mcts_c=1.4, gamma=0.99):
-        """
-        Args:
-            mu_earth: Gravitational parameter
-            a_chief: Chief semi-major axis
-            e_chief: Chief eccentricity
-            i_chief: Chief inclination
-            omega_chief: Chief argument of perigee
-            time_step: Time step duration (seconds)
-            horizon: Tree depth (number of decision levels)
-            branching_factor: Number of actions per node (typically 13)
-            num_workers: (Not used in serial MCTS but kept for interface compatibility)
-        """
+    def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief, 
+                 time_step=30.0, horizon=3, branching_factor=13, num_workers=None, 
+                 lambda_dv=0.0, mcts_iters=3000):
         self.mu_earth = mu_earth
         self.a_chief = a_chief
         self.e_chief = e_chief
@@ -46,33 +24,27 @@ class MCTSController:
         self.replay_buffer = []
         self.lambda_dv = lambda_dv
 
+        # Initialize Model
         self.model = OrbitalMCTSModel(
-                    a_chief, e_chief, i_chief, omega_chief, n_chief,
-                    rso=None, camera_fn=None,
-                    grid_dims=None,
-                    lambda_dv=lambda_dv,
-                    time_step=time_step,
-                    max_depth=horizon,
-                    alpha_dv=alpha_dv,
-                    beta_tan=beta_tan,
-                    target_radius=target_radius,
-                    gamma_r=gamma_r,
-                    r_min_rollout=r_min_rollout,
-                    r_max_rollout=r_max_rollout
-                )
+            a_chief, e_chief, i_chief, omega_chief, n_chief,
+            rso=None, camera_fn=None,
+            grid_dims=None,
+            lambda_dv=lambda_dv,
+            time_step=time_step,
+            max_depth=horizon
+        )
 
+        # Initialize MCTS
         self.mcts = MCTS(
             model=self.model,
             iters=mcts_iters,
             max_depth=horizon,
-            c=mcts_c,
-            gamma=gamma,
+            c=1.4,       
+            gamma=0.99,  
         )
 
-
     def select_action(self, state, time, tspan, grid, rso, camera_fn, step=0, verbose=False, out_folder=None):
-
-        # Update the model with current environment objects
+        # Update the model with current environment objects for this step
         self.model.rso = rso
         self.model.camera_fn = camera_fn
         self.model.grid_dims = grid.dims
@@ -80,27 +52,37 @@ class MCTSController:
         # Wrap ROEs + belief into an OrbitalState for MCTS
         root_state = OrbitalState(roe=state.copy(), grid=grid, time=time)
 
-        best_action, value, root_stats = self.mcts.get_best_root_action(root_state, step, out_folder, return_stats=True)
+        # --- FIX: Robustly Handle Return Values ---
+        result = self.mcts.get_best_root_action(root_state, step, out_folder)
+        
+        if len(result) == 3:
+            best_action, value, root_data = result
+            
+            # Check if root_data is already a dictionary (stats) or a Node object
+            if isinstance(root_data, dict):
+                stats = root_data
+            elif hasattr(root_data, 'N'):
+                # It's a Node object, extract stats
+                stats = {
+                    'root_N': root_data.N,
+                    'root_Q_sa': root_data.Q_sa,
+                    'root_N_sa': root_data.N_sa,
+                    'best_idx': int(np.argmax(root_data.Q_sa)) if len(root_data.Q_sa) > 0 else -1
+                }
+            else:
+                # Unknown format
+                stats = {}
+        else:
+            # Fallback if MCTS only returns 2 values
+            best_action, value = result
+            stats = {'root_N': 0, 'root_Q_sa': [], 'root_N_sa': []}
 
-        return best_action, value, root_stats
+        return best_action, value, stats
     
     def record_transition(self, t, state, action, reward, next_state, entropy_before=None, entropy_after=None,
                           info_gain=None, dv_cost=None, step_idx=None, root_stats=None, predicted_value=None):
         """
         Store one transition + diagnostics in the replay buffer.
-
-        Args:
-            t:         Time of transition (float)
-            state:     ROE before action (6,)
-            action:    Δv in RTN (3,)
-            reward:    Actual reward used in sim
-            next_state:ROE after action + propagation (6,)
-            entropy_before/after: grid entropies
-            info_gain: entropy_before - entropy_after
-            dv_cost:   ||Δv||
-            step_idx:  integer step index
-            root_stats:dict from MCTS.get_best_root_action
-            predicted_value: MCTS root value estimate
         """
         entry = {
             "time": float(t),
@@ -124,8 +106,7 @@ class MCTSController:
 
         if root_stats is not None:
             entry["root_N"] = int(root_stats.get("root_N", 0))
-            entry["root_best_idx"] = int(root_stats.get("best_idx", -1))
-
+            
             q_sa = root_stats.get("root_Q_sa", None)
             n_sa = root_stats.get("root_N_sa", None)
             if q_sa is not None:
@@ -135,12 +116,7 @@ class MCTSController:
 
         self.replay_buffer.append(entry)
 
-    
     def save_replay_buffer(self, base_dir="output"):
-        """
-        Write replay buffer to CSV in timestamped folder.
-        """
-        # Use unified output folder if provided
         if hasattr(self, 'output_folder') and self.output_folder:
             folder = self.output_folder
         else:
