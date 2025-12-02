@@ -18,11 +18,7 @@
     "horizon": 20,
     "lambda_dv": 0.01,
     "alpha_dv": 60.0,
-    "beta_tan": 0.1,
-    "target_radius": 2000.0,
-    "gamma_r": 0.002,
-    "r_min_rollout": 500.0,
-    "r_max_rollout": 5000.0
+    "beta_tan": 0.1
     },
     "orbit": {
         "mu_earth": 398600.4418,
