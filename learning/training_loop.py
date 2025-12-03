@@ -144,11 +144,18 @@ class AlphaZeroTrainer:
             roe_str = np.array2string(state.roe * self.config['orbit']['a_chief_km'] * 1000.0, precision=1, separator=', ')
             self.log(f"Initial ROE (m): {roe_str}")
             
+            # --- CRITICAL UPDATE: Set Initial Entropy ---
+            # This allows the MDP to normalize rewards relative to the starting condition
+            initial_ent = state.grid.get_entropy()
+            self.mdp.initial_entropy = initial_ent
+            self.log(f"Initial Entropy: {initial_ent:.4f}")
+            # --------------------------------------------
+            
             trajectory = []
             camera_positions = []
             view_directions = []
             burn_indices = []
-            entropy_history = [state.grid.get_entropy()]
+            entropy_history = [initial_ent]
             
             # Initial Viz Pos
             from roe.propagation import propagateGeomROE
@@ -163,6 +170,7 @@ class AlphaZeroTrainer:
             for step in range(steps):
                 pi, _, root_node = mcts.search(state)
                 
+                # Export tree occasionally
                 if step == 0 or step % 5 == 0:
                     try:
                         mcts.export_tree_to_dot(root_node, episode+1, step+1, os.path.join(ep_dir, "trees"))
@@ -205,7 +213,7 @@ class AlphaZeroTrainer:
                 state = next_state
                 sim_time += self.mdp.time_step
 
-            # --- FIXED CSV LOGGING ---
+            # --- CSV LOGGING ---
             data_rows = []
             for i, t in enumerate(trajectory):
                 # entropy_history[0] is initial, [i+1] is after step i
