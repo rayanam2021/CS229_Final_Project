@@ -15,6 +15,7 @@ import time
 import imageio
 from camera.camera_observations import VoxelGrid, GroundTruthRSO, calculate_entropy, simulate_observation, plot_scenario, update_plot
 from mcts.mcts_controller import MCTSController
+from mcts.mcts_controller_gpu import MCTSControllerGPU
 from roe.propagation import propagateGeomROE, rtn_to_roe
 from roe.dynamics import apply_impulsive_dv
 
@@ -108,14 +109,21 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, in
     mcts_iters = sim_config.get('mcts_iters', 3000)
     mcts_c = sim_config.get('mcts_c', 1.4)
     gamma = sim_config.get('gamma', 0.99)
+    use_gpu = sim_config.get('use_gpu', False)
+    gpu_batch_size = sim_config.get('gpu_batch_size', 32)
+    gpu_num_processes = sim_config.get('gpu_num_processes', 2)
 
     print("Starting Orbital Camera Simulation...")
     print(f"   Time step: {time_step} seconds")
     print(f"   Number of steps: {num_steps}")
-    if use_torch_grid:
+    if use_gpu:
+        print(f"Using GPU acceleration (MCTSControllerGPU)")
+        print(f"  - Batch size: {gpu_batch_size}")
+        print(f"  - Processes: {gpu_num_processes}")
+    elif use_torch_grid:
         print(f"Using torch and {grid_device}")
     else:
-        print(f"Using cpu")
+        print(f"Using CPU MCTS")
 
     start_time = time.time()
 
@@ -129,11 +137,29 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, in
 
     grid = VoxelGrid(grid_dims=(20, 20, 20))
     rso = GroundTruthRSO(grid)
-    
-    controller = MCTSController(mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-                                time_step=time_step, horizon=horizon, alpha_dv=alpha_dv, beta_tan=beta_tan,
-                                rollout_policy=rollout_policy, lambda_dv=lambda_dv, branching_factor=13,
-                                num_workers=None, mcts_iters=mcts_iters, mcts_c=mcts_c, gamma=gamma)
+
+    # Create controller with GPU or CPU
+    if use_gpu:
+        print("\n🚀 Creating GPU-accelerated MCTS controller...")
+        controller = MCTSControllerGPU(
+            mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+            time_step=time_step, horizon=horizon, alpha_dv=alpha_dv, beta_tan=beta_tan,
+            rollout_policy=rollout_policy, lambda_dv=lambda_dv, branching_factor=13,
+            num_workers=None, mcts_iters=mcts_iters, mcts_c=mcts_c, gamma=gamma,
+            use_parallel_mcts=False,  # Use single GPU sequentially (parallel GPU was slower)
+            num_processes=1,
+            use_gpu=True,
+            batch_size=gpu_batch_size,
+            verbose=verbose
+        )
+    else:
+        print("\n💻 Creating CPU MCTS controller...")
+        controller = MCTSController(
+            mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+            time_step=time_step, horizon=horizon, alpha_dv=alpha_dv, beta_tan=beta_tan,
+            rollout_policy=rollout_policy, lambda_dv=lambda_dv, branching_factor=13,
+            num_workers=None, mcts_iters=mcts_iters, mcts_c=mcts_c, gamma=gamma
+        )
 
     state = initial_state_roe
     t = 0.0

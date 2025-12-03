@@ -58,7 +58,7 @@ class MCTS:
         best_value = float(root.Q_sa[best_idx])
 
         if return_stats:
-            if step in (0, 5, 10, 19):
+            if step in (0, 5, 10, 19) and out_folder is not None:
                 self._export_tree_to_dot(root, step, out_folder)
             stats = {
                 "root_N": int(root.N),
