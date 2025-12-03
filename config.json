@@ -1,17 +1,17 @@
 {
     "simulation": {
         "run_id": "random_policy_1",
-        "num_steps": 10,
-        "time_step": 30.0,
+        "num_steps": 50,
+        "time_step": 120.0,
         "verbose": true,
         "visualize": true,
-        "output_dir": "output",
+        "output_dir": "output_training",
         "seed": 0,
         "use_torch_grid": true,
         "grid_device": "cuda"
     },
     "mcts": {
-        "max_horizon": 20,
+        "max_horizon": 5,
         "desired_rollout_policy":"random",
         "mcts_iters": 1000,
         "mcts_c": 1.4,
@@ -26,6 +26,9 @@
         "e_chief": 0.001,
         "i_chief_deg": 98.0,
         "omega_chief_deg": 30.0
+    },
+    "control": {
+        "lambda_dv": 0.001
     },
     "camera": {
         "fov_degrees": 10.0,
@@ -42,5 +45,28 @@
         "dey": 0.0,
         "dix": 50.0,
         "diy": 0.0
+    },
+    "monte_carlo": {
+        "num_episodes": 10,
+        "perturbation_bounds": {
+            "da": 0.0,
+            "dl": 5.0,
+            "dex": 2.0,
+            "dey": 2.0,
+            "dix": 1.0,
+            "diy": 1.0
+        }
+    },
+    "network": {
+        "hidden_dim": 128
+    },
+    "training": {
+        "batch_size": 64,
+        "learning_rate": 0.0005,
+        "mcts_iters": 100,
+        "epochs_per_cycle": 5,
+        "buffer_size": 20000,
+        "c_puct": 1.4,
+        "gamma": 0.99
     }
 }

@@ -17,8 +17,6 @@ import numpy as np
 import itertools
 from multiprocessing import Pool, cpu_count
 import time
-import pickle
-import os
 
 
 def _worker_mcts_search(args):
@@ -38,7 +36,7 @@ def _worker_mcts_search(args):
 
     # Run sequential MCTS searches on this process using the same logic as ParallelMCTS
     mcts_search = _MCTSSearcher(model, max_depth, c, gamma, roll_policy)
-    for iter_idx in range(iterations):
+    for _ in range(iterations):
         mcts_search._search(local_root, depth=0)
 
     process_elapsed = time.time() - process_start

@@ -1,11 +1,10 @@
-import sys
 import numpy as np
 import matplotlib.pyplot as plt
-
+from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import sys
 
-# --- Helper functions (Unchanged) ---
+# --- Helper functions & Classes ---
 def logit(p: np.ndarray) -> np.ndarray:
     p = np.clip(p, 1e-6, 1.0 - 1e-6)
     return np.log(p / (1.0 - p))
@@ -20,7 +19,6 @@ def calculate_entropy(belief: np.ndarray) -> float:
                       (1 - belief_clipped) * np.log(1 - belief_clipped))
     return float(entropy)
 
-# --- Classes (Unchanged) ---
 class VoxelGrid:
     def __init__(self, grid_dims=(20, 20, 20), voxel_size=1.0, origin=(-10, -10, -10)):
         self.dims = grid_dims
@@ -77,12 +75,8 @@ class GroundTruthRSO:
     def _create_simple_shape(self):
         center = (self.dims[0] // 2, self.dims[1] // 2, self.dims[2] // 2)
         s = 4 
-        # Main body
         self.shape[center[0]-s:center[0]+s, center[1]-s:center[1]+s, center[2]-s:center[2]+s] = True
-        # Panel
-        panel_length = 6
-        self.shape[center[0]-s:center[0]+s, center[1]+s:center[1]+s+panel_length, center[2]-1:center[2]+1] = True
-        # Antenna
+        self.shape[center[0]-s:center[0]+s, center[1]+s:center[1]+s+6, center[2]-1:center[2]+1] = True
         self.shape[center[0]-1:center[0]+1, center[1]-1:center[1]+1, center[2]+s:center[2]+s+3] = True
 
 # --- Ray Tracing ---
@@ -116,8 +110,8 @@ def _trace_ray(ray_origin, ray_dir, grid, rso, noise_params):
     ray_dir_safe = np.where(np.abs(ray_dir) < eps, np.sign(ray_dir) * eps + eps, ray_dir)
     t1 = (grid.origin - ray_origin) / ray_dir_safe
     t2 = (grid.max_bound - ray_origin) / ray_dir_safe
-    t_min, t_max = np.minimum(t1, t2), np.maximum(t1, t2)
-    t_enter, t_exit = np.max(t_min), np.min(t_max)
+    tn, tx = np.minimum(t1, t2), np.maximum(t1, t2)
+    t_enter, t_exit = np.max(tn), np.min(tx)
 
     if t_enter > t_exit or t_exit < 0: return None, "miss", []
     start_point = ray_origin if t_enter < 0 else ray_origin + ray_dir * t_enter
@@ -136,13 +130,11 @@ def _trace_ray(ray_origin, ray_dir, grid, rso, noise_params):
         if not grid.is_in_bounds(curr): break
         v_idx = tuple(curr)
         missed.append(v_idx)
-        
         if rso.shape[v_idx]:
             if np.random.rand() < noise_params["p_hit_given_occupied"]:
                 return v_idx, "hit", missed[:-1]
         elif np.random.rand() < noise_params["p_hit_given_empty"]:
             return v_idx, "hit", missed[:-1]
-
         axis = np.argmin(t_max_march)
         t_max_march[axis] += t_delta[axis]
         curr[axis] += step[axis]
@@ -152,38 +144,28 @@ def simulate_observation(grid, rso, camera_fn, servicer_rtn):
     cam_pos = servicer_rtn[-1] if servicer_rtn.ndim > 1 else servicer_rtn
     view_dir = -cam_pos / np.linalg.norm(cam_pos)
     rays = get_camera_rays(cam_pos, view_dir, camera_fn['fov_degrees'], camera_fn['sensor_res'])
-    
     hits, misses = set(), set()
     for r in rays:
         h, s, m = _trace_ray(cam_pos, r, grid, rso, camera_fn['noise_params'])
         misses.update(m)
         if s == 'hit': hits.add(h)
-    
     grid.update_belief(list(hits), list(misses))
     return list(hits), list(misses)
 
 # --- VISUALIZATION ---
 
-def draw_spacecraft(ax, position, direction, color="gray", scale_factor=1.5):
+def draw_spacecraft(ax, position, direction, color="gray", scale=(4.0, 2.0, 2.0)):
     """
-    Draws a spacecraft prism. 
-    Base dimensions ~ 4x2x2 meters. 
-    Default scale_factor=1.5 -> ~6x3x3 meters (Comparable to RSO which is ~8m).
+    Draws a spacecraft as a 3D prism.
+    Scale is a tuple (L, W, H) in meters.
     """
     direction = direction / np.linalg.norm(direction)
     global_z = np.array([0, 0, 1])
     temp_up = np.array([0, 1, 0]) if np.allclose(np.abs(direction), global_z) else global_z
-        
     right = np.cross(direction, temp_up); right /= np.linalg.norm(right)
     up = np.cross(right, direction); up /= np.linalg.norm(up)
 
-    # Base dimensions in meters
-    L, W, H = 4.0, 2.0, 2.0 
-    
-    L *= scale_factor
-    W *= scale_factor
-    H *= scale_factor
-
+    L, W, H = scale
     d_vec = direction * (L / 2)
     r_vec = right * (W / 2)
     u_vec = up * (H / 2)
@@ -204,9 +186,6 @@ def draw_spacecraft(ax, position, direction, color="gray", scale_factor=1.5):
     return box
 
 def plot_scenario(grid, rso, camera_pos_world, view_direction, fov_degrees, sensor_res, fig=None, ax=None):
-    """
-    Initialize the plot artists.
-    """
     if fig is None:
         fig = plt.figure(figsize=(15, 12))
         ax = fig.add_subplot(111, projection='3d')
@@ -217,78 +196,31 @@ def plot_scenario(grid, rso, camera_pos_world, view_direction, fov_degrees, sens
         ax.set_title('RSO Characterization Mission', fontsize=16)
 
         artists = {}
-
-        # REMOVED: Grid Bounding Box lines
-
-        # 1. Servicer Path Line (Starts Empty)
-        artists['servicer_path_line'], = ax.plot([], [], [], 
-                                                 c='blue', ls='-', lw=1.5, alpha=0.6, label='Trajectory')
-
+        
+        # 1. Servicer Path Line
+        artists['servicer_path_line'], = ax.plot([], [], [], c='blue', ls='-', lw=1.5, alpha=0.6, label='Trajectory')
+        
         # 2. Burn Markers
         artists['burn_scatter'] = ax.scatter([], [], [], c='orange', marker='^', s=150, label='Maneuver', zorder=10)
-
+        
         # 3. Servicer Spacecraft
-        artists['servicer_prism'] = draw_spacecraft(ax, camera_pos_world, view_direction, scale_factor=1.5)
+        artists['servicer_prism'] = draw_spacecraft(ax, camera_pos_world, view_direction, scale=(4.0, 2.0, 2.0))
         ax.plot([], [], [], color='gray', marker='s', markersize=10, linestyle='None', label='Servicer')
         
-        # 4. FOV Lines (Thicker, Magenta for visibility)
+        # 4. FOV Lines
         artists['fov_lines'] = [ax.plot([], [], [], c='magenta', ls='-', lw=2.0, label='Camera FOV' if i==0 else None)[0] for i in range(8)]
-
-        # 5. View Direction Line (Deep Green, thick)
+        
+        # 5. View Direction
         artists['view_line'] = ax.plot([], [], [], c='darkgreen', ls='--', lw=2.5, label='View Direction')[0]
         
         # 6. Belief Scatter
         artists['belief_scatter'] = ax.scatter([], [], [], c='green', marker='s', s=30, label='Belief (P>0.7)', depthshade=True)
         
-        # 7. Ground Truth (Wireframe)
-        truth_filled_voxels = np.argwhere(rso.shape)
-        gt_lines = []
-        
-        # (Ground truth drawing logic unchanged for brevity, kept same as previous)
-        exposed_faces = [] 
-        padded_shape = np.pad(rso.shape, pad_width=1, mode='constant', constant_values=False)
-        for x, y, z in truth_filled_voxels:
-            px, py, pz = x + 1, y + 1, z + 1
-            if not padded_shape[px+1, py, pz]: exposed_faces.append(((x,y,z), 0))
-            if not padded_shape[px-1, py, pz]: exposed_faces.append(((x,y,z), 1))
-            if not padded_shape[px, py+1, pz]: exposed_faces.append(((x,y,z), 2))
-            if not padded_shape[px, py-1, pz]: exposed_faces.append(((x,y,z), 3))
-            if not padded_shape[px, py, pz+1]: exposed_faces.append(((x,y,z), 4))
-            if not padded_shape[px, py, pz-1]: exposed_faces.append(((x,y,z), 5))
-
-        face_verts = []
-        for (x, y, z), face_dir in exposed_faces: 
-            origin_voxel = grid.origin + np.array([x, y, z]) * grid.voxel_size
-            size = grid.voxel_size
-            c = [
-                origin_voxel, origin_voxel + [size, 0, 0], origin_voxel + [0, size, 0], 
-                origin_voxel + [0, 0, size], origin_voxel + [size, size, 0], 
-                origin_voxel + [size, 0, size], origin_voxel + [0, size, size], 
-                origin_voxel + [size, size, size]
-            ]
-            if face_dir == 0: face_verts.append([c[1], c[4], c[7], c[5]]) 
-            elif face_dir == 1: face_verts.append([c[0], c[3], c[6], c[2]])
-            elif face_dir == 2: face_verts.append([c[2], c[4], c[7], c[6]]) 
-            elif face_dir == 3: face_verts.append([c[0], c[1], c[5], c[3]]) 
-            elif face_dir == 4: face_verts.append([c[3], c[5], c[7], c[6]]) 
-            elif face_dir == 5: face_verts.append([c[0], c[1], c[4], c[2]]) 
-
-        if face_verts:
-            edges_set = set()
-            for face in face_verts:
-                p1, p2, p3, p4 = face
-                edges_set.add(tuple(sorted((tuple(p1), tuple(p2)))))
-                edges_set.add(tuple(sorted((tuple(p2), tuple(p3)))))
-                edges_set.add(tuple(sorted((tuple(p3), tuple(p4)))))
-                edges_set.add(tuple(sorted((tuple(p4), tuple(p1)))))
-            
-            for idx, (p1_tuple, p2_tuple) in enumerate(edges_set):
-                p1 = np.array(p1_tuple); p2 = np.array(p2_tuple)
-                label = 'Ground Truth' if idx == 0 else None
-                line, = ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], 
-                                 color=(1.0, 0.6, 0.6), linewidth=0.8, alpha=0.6, label=label)
-                gt_lines.append(line)
-        artists['gt_lines'] = gt_lines
+        # 7. Ground Truth
+        truth_pts = np.argwhere(rso.shape)
+        if len(truth_pts) > 0:
+            world_pts = grid.grid_to_world_coords(truth_pts)
+            ax.scatter(world_pts[:,0], world_pts[:,1], world_pts[:,2], c='red', marker='.', alpha=0.15, label='Target (Hidden)')
 
         artists['entropy_text'] = ax.text2D(0.05, 0.95, "", transform=ax.transAxes, fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
         
@@ -298,14 +230,14 @@ def plot_scenario(grid, rso, camera_pos_world, view_direction, fov_degrees, sens
 
 def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees, sensor_res, noise_params, ax, artists, target_com, burn_indices=None):
     """
-    Updates the plot for the given frame.
+    Updates the plot for the given frame. Removed plot_extent argument.
     """
     if frame >= len(camera_positions): return []
 
     cam_pos = camera_positions[frame]
     view_dir = view_directions[frame]
    
-    # 1. Update Belief Scatter
+    # 1. Update Belief
     mask = (grid.belief > 0.7)
     indices = np.argwhere(mask)
     if indices.size > 0:
@@ -317,12 +249,10 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
     else:
         artists['belief_scatter']._offsets3d = ([], [], [])
 
-    # 2. Update Servicer Path (Growing Line)
-    # Draw from start (0) to current (frame + 1) to show history
-    path_x = camera_positions[:frame+1, 0]
-    path_y = camera_positions[:frame+1, 1]
-    path_z = camera_positions[:frame+1, 2]
-    artists['servicer_path_line'].set_data_3d(path_x, path_y, path_z)
+    # 2. Update Path
+    artists['servicer_path_line'].set_data_3d(camera_positions[:frame+1, 0], 
+                                              camera_positions[:frame+1, 1], 
+                                              camera_positions[:frame+1, 2])
 
     # 3. Update Burn Markers
     if burn_indices:
@@ -337,13 +267,13 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
 
     # 4. Update Spacecraft
     artists['servicer_prism'].remove()
-    # Use Fixed Scaling (1.5 -> ~6m) to keep it visible but not huge
-    artists['servicer_prism'] = draw_spacecraft(ax, cam_pos, view_dir, scale_factor=1.5)
+    # Fixed scale ~4m long
+    artists['servicer_prism'] = draw_spacecraft(ax, cam_pos, view_dir, scale=(4.0, 2.0, 2.0))
     
-    # 5. Update View Direction Line
+    # 5. Update View Direction
     artists['view_line'].set_data_3d([cam_pos[0], target_com[0]], [cam_pos[1], target_com[1]], [cam_pos[2], target_com[2]])
     
-    # 6. Update FOV Lines
+    # 6. Update FOV
     global_up = np.array([0, 0, 1])
     if np.allclose(np.abs(view_dir), global_up): global_up = np.array([0, 1, 0])
     right = np.cross(view_dir, global_up); right /= np.linalg.norm(right)
@@ -358,8 +288,7 @@ def update_plot(frame, grid, rso, camera_positions, view_directions, fov_degrees
     corners = [np.array([-1,-1]), np.array([1,-1]), np.array([1,1]), np.array([-1,1])]
     pts = []
     for u,v in corners:
-        d = (view_dir + right*u*w_half + up*v*h_half)
-        d /= np.linalg.norm(d)
+        d = (view_dir + right*u*w_half + up*v*h_half); d /= np.linalg.norm(d)
         pts.append(cam_pos + d * dist)
         
     for i in range(4):

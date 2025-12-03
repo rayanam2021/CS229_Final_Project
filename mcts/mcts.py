@@ -186,10 +186,9 @@ class MCTS:
             dot.node(str(node.id), label)
 
             for child in node.children:
-                qs = ", ".join([f"{q:.2f}" for q in node.Q_sa])
                 edge_label = (
                     f"a={child.action_index}\n"
-                    f"r={child.reward:.2f}\n"   # immediate rewards returned by model at that step
+                    f"r={child.reward:.2f}\n"
                     f"Q={node.Q_sa[child.action_index]:.2f}"
                 )
                 dot.edge(str(node.id), str(child.id), edge_label)
