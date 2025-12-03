@@ -1,0 +1,17 @@
+{
+  "run_id": "iters_500_c_0.7_gamma_0.9_h_10_lam_0.001_seed_2",
+  "mcts_iters": 500,
+  "mcts_c": 0.7,
+  "gamma": 0.9,
+  "max_horizon": 10,
+  "lambda_dv": 0.001,
+  "num_steps": 20,
+  "time_step": 30.0,
+  "seed": 2,
+  "desired_rollout_policy": "random",
+  "alpha_dv": 60.0,
+  "beta_tan": 0.1,
+  "use_gpu": true,
+  "gpu_batch_size": 32,
+  "gpu_num_processes": 1
+}

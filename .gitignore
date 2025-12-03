@@ -5,7 +5,7 @@ __*/
 *.pyc
 *.pyo
 *.pyd
-__pycache__/
+*__pycache__/
 *.env
 *.venv
 *.egg

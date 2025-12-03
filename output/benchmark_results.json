@@ -1,0 +1,99 @@
+{
+  "timestamp": "2025-12-02T22:00:29.476386",
+  "results": {
+    "Sequential CPU MCTS": {
+      "config": {
+        "iterations": 100,
+        "grid_dims": [
+          20,
+          20,
+          20
+        ],
+        "max_depth": 5,
+        "camera_res": 64,
+        "num_cpu_processes": 11,
+        "gpu_batch_size": 16
+      },
+      "timing": {
+        "total": 84.70221257209778,
+        "iterations": 100,
+        "per_iteration": 0.8470221257209778
+      },
+      "stats": {
+        "device": "CPU"
+      }
+    },
+    "Parallel CPU MCTS (11 processes)": {
+      "config": {
+        "iterations": 100,
+        "grid_dims": [
+          20,
+          20,
+          20
+        ],
+        "max_depth": 5,
+        "camera_res": 64,
+        "num_cpu_processes": 11,
+        "gpu_batch_size": 16
+      },
+      "timing": {
+        "total": 13.783031463623047,
+        "iterations": 100,
+        "per_iteration": 0.13783031463623047
+      },
+      "stats": {
+        "device": "CPU",
+        "num_processes": 11
+      }
+    },
+    "GPU MCTS (serial)": {
+      "config": {
+        "iterations": 100,
+        "grid_dims": [
+          20,
+          20,
+          20
+        ],
+        "max_depth": 5,
+        "camera_res": 64,
+        "num_cpu_processes": 11,
+        "gpu_batch_size": 16
+      },
+      "timing": {
+        "total": 61.23663139343262,
+        "iterations": 100,
+        "per_iteration": 0.6123663139343262
+      },
+      "stats": {
+        "device": "cuda",
+        "batch_size": 16,
+        "use_gpu": true
+      }
+    },
+    "Parallel GPU MCTS (11 workers)": {
+      "config": {
+        "iterations": 100,
+        "grid_dims": [
+          20,
+          20,
+          20
+        ],
+        "max_depth": 5,
+        "camera_res": 64,
+        "num_cpu_processes": 11,
+        "gpu_batch_size": 16
+      },
+      "timing": {
+        "total": 75.21384763717651,
+        "iterations": 100,
+        "per_iteration": 0.7521384763717651
+      },
+      "stats": {
+        "device": "cuda",
+        "batch_size": 16,
+        "use_gpu": true,
+        "num_workers": 11
+      }
+    }
+  }
+}

@@ -5,33 +5,34 @@ import pandas as pd
 import time
 import sys
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
 from datetime import datetime
 
 # Sweep over MCTS parameters with GPU acceleration option
 
 if __name__ == "__main__":
-    # GPU Configuration
-    USE_GPU = True  # Set to False to disable GPU acceleration
-    GPU_BATCH_SIZE = 32  # Unused - sequential MCTS processes one state at a time
-    NUM_GPU_PROCESSES = 1  # Sequential GPU MCTS only (parallel was slower in benchmarks)
+    # Parallel CPU Configuration (6.15x speedup measured)
+    NUM_PROCESSES = None  # None = cpu_count() - 1 (auto-detect)
 
-    # Sweep parameters for MCTS tree search
-    mcts_iters_values = [500, 1000, 2000]     # Number of simulations per planning step
-    mcts_c_values = [0.7, 1.4, 2.0]           # UCB exploration constant
-    gamma_values = [0.90, 0.95, 0.99]         # Discount factor for future rewards
-    max_horizon_values = [10, 20, 40]         # Tree search depth (steps)
-    lambda_dv_values = [0.001, 0.01, 0.1]     # Fuel cost weight in reward
-    seeds = [0, 1, 2]
+    # Sweep parameters for MCTS tree search (32 total configs: 2×2×2×2×2×1)
+    mcts_iters_values = [500, 2000]           # Number of simulations per planning step
+    mcts_c_values = [1.4, 2.0]                # UCB exploration constant
+    gamma_values = [0.95, 0.99]               # Discount factor for future rewards
+    max_horizon_values = [10, 20]             # Tree search depth (steps)
+    lambda_dv_values = [0.01, 0.1]            # Fuel cost weight in reward
+    seeds = [0]                               # Single seed per config
 
     print(f"\n{'='*70}")
-    print(f"MCTS PARAMETER SWEEP - {'GPU ENABLED' if USE_GPU else 'CPU ONLY'}")
+    print(f"MCTS PARAMETER SWEEP - PARALLEL CPU (6.15x speedup)")
     print(f"{'='*70}")
-    if USE_GPU:
-        print(f"GPU Configuration:")
-        print(f"  Batch size: {GPU_BATCH_SIZE}")
-        print(f"  GPU processes: {NUM_GPU_PROCESSES}")
-        print(f"  Expected speedup: 1.7x (from GPU observations)")
+    print(f"Parallel CPU Configuration:")
+    print(f"  Parallel processes: {NUM_PROCESSES or 'auto (cpu_count - 1)'}")
+    print(f"  Expected speedup: 6.15x (measured in benchmarks)")
+    print(f"  Total configs: 32 (2×2×2×2×2×1)")
+    print(f"  Estimated time: ~58 hours (~2.4 days)")
     print(f"{'='*70}\n")
 
     # Initialize results file with header
@@ -83,16 +84,13 @@ if __name__ == "__main__":
                                 "gamma": gamma,
                                 "max_horizon": max_horizon,
                                 "lambda_dv": lambda_dv,
-                                "num_steps": 20,
-                                "time_step": 30.0,
+                                "num_steps": 50,
+                                "time_step": 120.0,
                                 "seed": seed,
-                                "desired_rollout_policy": "random",  # Use random policy (default)
-                                "alpha_dv": 60.0,                     # Not used with random policy
-                                "beta_tan": 0.1,                      # Not used with random policy
-                                # GPU Configuration
-                                "use_gpu": USE_GPU,
-                                "gpu_batch_size": GPU_BATCH_SIZE,
-                                "gpu_num_processes": NUM_GPU_PROCESSES,
+                                "desired_rollout_policy": "random",
+                                "alpha_dv": 60.0,
+                                "beta_tan": 0.1,
+                                "num_processes": NUM_PROCESSES,  # Auto-detect cores
                             }
 
                             with open(os.path.join(out_dir, f"config.json"), "w") as f:
@@ -101,7 +99,7 @@ if __name__ == "__main__":
                             print(f"\n{'='*70}")
                             print(f"Run {run_count}/{total_runs}")
                             print(f"mcts_iters={mcts_iters}, mcts_c={mcts_c}, gamma={gamma}, horizon={max_horizon}, lambda_dv={lambda_dv}, seed={seed}")
-                            print(f"Using: {'GPU (MCTSControllerGPU) - 1.7x speedup' if USE_GPU else 'CPU (MCTSController)'}")
+                            print(f"Using: Parallel CPU MCTS (6.15x speedup)")
                             print(f"Output: {out_dir}")
                             print(f"{'='*70}")
 
@@ -126,6 +124,7 @@ if __name__ == "__main__":
                                             "p_hit_given_empty": 0.001,
                                         }
                                     },
+                                    control_params={},  # Not used in current implementation
                                     initial_state_roe=np.array([0.0, 200.0, 100.0, 0.0, 50.0, 0.0]) / 7000000.0,  # meters -> dimensionless
                                     out_folder=out_dir
                                 )
@@ -145,7 +144,7 @@ if __name__ == "__main__":
                                         "max_horizon": max_horizon,
                                         "lambda_dv": lambda_dv,
                                         "seed": seed,
-                                        "use_gpu": USE_GPU,
+                                        "method": "parallel_cpu",
                                         "final_entropy": final_entropy,
                                         "total_dv_cost": total_dv_cost,
                                         "total_info_gain": df["info_gain"].sum() if "info_gain" in df.columns else np.nan,
@@ -159,7 +158,7 @@ if __name__ == "__main__":
                                         "max_horizon": max_horizon,
                                         "lambda_dv": lambda_dv,
                                         "seed": seed,
-                                        "use_gpu": USE_GPU,
+                                        "method": "parallel_cpu",
                                         "error": "replay_buffer.csv not found",
                                     }
                             except Exception as e:
@@ -171,7 +170,7 @@ if __name__ == "__main__":
                                     "max_horizon": max_horizon,
                                     "lambda_dv": lambda_dv,
                                     "seed": seed,
-                                    "use_gpu": USE_GPU,
+                                    "method": "parallel_cpu",
                                     "error": str(e),
                                 }
 

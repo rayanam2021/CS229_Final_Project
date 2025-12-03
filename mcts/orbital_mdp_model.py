@@ -1,5 +1,5 @@
 import numpy as np
-from roe.propagation import rtn_to_roe, ROEDynamics
+from roe.propagation import rtn_to_roe, ROEDynamics, map_roe_to_rtn
 from roe.dynamics import apply_impulsive_dv
 from camera.camera_observations import simulate_observation, calculate_entropy, VoxelGrid
 

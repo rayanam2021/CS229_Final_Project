@@ -18,6 +18,28 @@ from roe.dynamics import apply_impulsive_dv
 import imageio
 import csv
 
+
+class EpisodeEntropyNormalizer:
+    """
+    Normalize rewards by the initial entropy of the episode.
+
+    This ensures that rewards are relative to how uncertain you started,
+    making the learning signal more consistent across different scenarios.
+    """
+    def __init__(self):
+        self.initial_entropy = None
+
+    def start_episode(self, initial_entropy):
+        """Call at the beginning of each episode with the initial entropy."""
+        self.initial_entropy = initial_entropy
+
+    def normalize(self, reward):
+        """Normalize reward by initial entropy."""
+        if self.initial_entropy is None or self.initial_entropy == 0:
+            return reward
+        return reward / self.initial_entropy
+
+
 def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera_positions, view_directions, burn_indices):
     print("\n🎬 Generating visualization frames...")
     vis_grid = VoxelGrid(grid_dims=grid_initial.dims, voxel_size=grid_initial.voxel_size, origin=grid_initial.origin)
@@ -69,21 +91,14 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
     mcts_iters = sim_config.get('mcts_iters', 3000)
     mcts_c = sim_config.get('mcts_c', 1.4)
     gamma = sim_config.get('gamma', 0.99)
-    use_gpu = sim_config.get('use_gpu', False)
-    gpu_batch_size = sim_config.get('gpu_batch_size', 32)
-    gpu_num_processes = sim_config.get('gpu_num_processes', 2)
+    # Use parallel CPU MCTS by default (6.15x speedup)
+    num_processes = sim_config.get('num_processes', None)
 
     print("Starting Orbital Camera Simulation...")
     print(f"   Time step: {time_step} seconds")
     print(f"   Number of steps: {num_steps}")
-    if use_gpu:
-        print(f"Using GPU acceleration (MCTSControllerGPU)")
-        print(f"  - Batch size: {gpu_batch_size}")
-        print(f"  - Processes: {gpu_num_processes}")
-    elif use_torch_grid:
-        print(f"Using torch and {grid_device}")
-    else:
-        print(f"Using CPU MCTS")
+    print(f"Using Parallel CPU MCTS (6.15x speedup)")
+    print(f"  - Processes: {num_processes or 'auto (cpu_count - 1)'}")
 
     mu_earth = orbit_params['mu_earth']
     a_chief = orbit_params['a_chief_km']
@@ -95,46 +110,42 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
     grid = VoxelGrid(grid_dims=(20, 20, 20))
     rso = GroundTruthRSO(grid)
 
-    # Create controller with GPU or CPU
-    if use_gpu:
-        print("\n🚀 Creating GPU-accelerated MCTS controller...")
-        controller = MCTSControllerGPU(
-            mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-            time_step=time_step, horizon=horizon, alpha_dv=alpha_dv, beta_tan=beta_tan,
-            rollout_policy=rollout_policy, lambda_dv=lambda_dv, branching_factor=13,
-            num_workers=None, mcts_iters=mcts_iters, mcts_c=mcts_c, gamma=gamma,
-            use_parallel_mcts=False,  # Use single GPU sequentially (parallel GPU was slower)
-            num_processes=1,
-            use_gpu=True,
-            batch_size=gpu_batch_size,
-            verbose=verbose
-        )
-    else:
-        print("\n💻 Creating CPU MCTS controller...")
-        controller = MCTSController(
-            mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-            time_step=time_step, horizon=horizon, alpha_dv=alpha_dv, beta_tan=beta_tan,
-            rollout_policy=rollout_policy, lambda_dv=lambda_dv, branching_factor=13,
-            num_workers=None, mcts_iters=mcts_iters, mcts_c=mcts_c, gamma=gamma
-        )
+    # Create parallel CPU MCTS controller
+    print("\n💻 Creating Parallel CPU MCTS controller...")
+    controller = MCTSController(
+        mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+        time_step=time_step, horizon=horizon, alpha_dv=alpha_dv, beta_tan=beta_tan,
+        rollout_policy=rollout_policy, lambda_dv=lambda_dv, branching_factor=13,
+        num_workers=None, mcts_iters=mcts_iters, mcts_c=mcts_c, gamma=gamma,
+        use_parallel_mcts=True,
+        num_processes=num_processes,
+        verbose=verbose
+    )
 
     state = initial_state_roe
     time_sim = 0.0
-    
+
     initial_entropy = grid.get_entropy()
     entropy_history = [initial_entropy]
-    
+    entropy_reductions = []  # Track entropy reductions for early stopping
+
+    # Initialize reward normalizer for this episode
+    reward_normalizer = EpisodeEntropyNormalizer()
+    reward_normalizer.start_episode(initial_entropy)
+
     rho_start, _ = propagateGeomROE(state, a_chief, e_chief, i_chief, omega_chief, n_chief, np.array([time_sim]), t0=time_sim)
-    pos_start = rho_start[:, 0] * 1000 
+    pos_start = rho_start[:, 0] * 1000
     camera_positions = [pos_start]
     view_directions = [-pos_start / np.linalg.norm(pos_start)]
-    burn_indices = [] 
+    burn_indices = []
 
     print(f"Using torch and cuda")
+    print(f"Initial entropy: {initial_entropy:.4f}")
     roe_str = np.array2string(state, formatter={'float_kind':lambda x: "%.1e" % x})
     print(f"Initial State (ROEs): {roe_str}")
-    
+
     start_time = time.time()
+    early_stopped = False
 
     for step in range(num_steps):
         print(f"\n{'='*70}")
@@ -167,25 +178,67 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
         entropy_history.append(entropy_after)
         
         entropy_reduction = entropy_before - entropy_after
+        entropy_reductions.append(entropy_reduction)
         dv_cost = np.linalg.norm(action)
         actual_reward = entropy_reduction - controller.lambda_dv * dv_cost
-        
+
+        # Normalize reward by initial entropy
+        normalized_reward = reward_normalizer.normalize(actual_reward)
+
         print(f"   Entropy: {entropy_before:.4f} → {entropy_after:.4f}")
         print(f"   Entropy reduction: {entropy_reduction:.6f}")
         print(f"   ΔV cost: {dv_cost:.6f}")
         print(f"   Reward: {actual_reward:.6f}")
-        
-        controller.record_transition(time_sim, state, action, actual_reward, next_state_propagated,
+        print(f"   Normalized reward: {normalized_reward:.6f}")
+
+        controller.record_transition(time_sim, state, action, normalized_reward, next_state_propagated,
                                      entropy_before=entropy_before, entropy_after=entropy_after,
-                                     info_gain=entropy_reduction, dv_cost=dv_cost, 
+                                     info_gain=entropy_reduction, dv_cost=dv_cost,
                                      step_idx=step, root_stats=stats, predicted_value=predicted_value)
 
-        state = next_state_propagated 
+        state = next_state_propagated
         time_sim += time_step
+
+        # Early stopping: check after 10 steps if entropy reduction is stagnating
+        if step >= 9 and len(entropy_reductions) >= 10:  # At least 10 steps completed
+            # Calculate average reduction over last 3-5 steps (or all available if less than 5)
+            window_size = min(5, len(entropy_reductions))
+            recent_reductions = entropy_reductions[-window_size:]
+            avg_reduction = np.mean(recent_reductions)
+
+            # Check if average reduction is less than 1% of initial entropy per step
+            early_stop_threshold = 0.01 * initial_entropy
+
+            if avg_reduction < early_stop_threshold:
+                print(f"\n{'='*70}")
+                print(f"⏹ EARLY STOPPING TRIGGERED")
+                print(f"{'='*70}")
+                print(f"Step {step+1}: Average entropy reduction over last {window_size} steps: {avg_reduction:.6f}")
+                print(f"Threshold (1% of initial entropy): {early_stop_threshold:.6f}")
+                print(f"Entropy has stagnated - skipping remaining {num_steps - step - 1} steps")
+                print(f"{'='*70}")
+                early_stopped = True
+                break
 
     end_time = time.time()
     print(f"⏱ Episode runtime: {end_time - start_time:.2f} seconds")
     controller.save_replay_buffer(base_dir=out_folder)
+
+    # Save early stopping metadata
+    metadata = {
+        "early_stopped": early_stopped,
+        "total_steps_completed": len(entropy_reductions),
+        "num_steps_requested": num_steps,
+    }
+    if early_stopped and len(entropy_reductions) >= 10:
+        window_size = min(5, len(entropy_reductions))
+        recent_reductions = entropy_reductions[-window_size:]
+        metadata["final_avg_reduction"] = float(np.mean(recent_reductions))
+        metadata["early_stop_threshold"] = float(0.01 * initial_entropy)
+
+    metadata_path = os.path.join(out_folder, "early_stopping_metadata.json")
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
 
     if visualize and len(camera_positions) > 0:
         try:
