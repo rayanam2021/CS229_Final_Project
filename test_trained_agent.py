@@ -136,8 +136,8 @@ if __name__ == "__main__":
     # --- CONFIGURATION ---
     # Update this to point to the specific run you want to test
     # If using Windows, make sure to use forward slashes or raw strings for paths
-    RUN_FOLDER = "output_training/run_2025-12-02_23-37-56" 
-    CHECKPOINT_FILE = "checkpoint_ep_5.pt" # Or 'best.pt'
+    RUN_FOLDER = "output_training/run_2025-12-03_20-47-26" 
+    CHECKPOINT_FILE = "checkpoint_ep_78.pt" # Or 'best.pt'
     # ---------------------
 
     cfg = load_config()

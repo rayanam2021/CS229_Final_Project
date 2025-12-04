@@ -19,7 +19,7 @@ def load_config(path="config.json"):
                 'i_chief_deg': 98.0, 'omega_chief_deg': 30.0
             },
             'camera': {
-                'fov_degrees': 15.0, 'sensor_res': [64, 64],
+                'fov_degrees': 10.0, 'sensor_res': [64, 64],
                 'noise_params': {'p_hit_given_occupied': 0.95, 'p_hit_given_empty': 0.001}
             },
             'initial_roe_meters': {
@@ -89,8 +89,8 @@ def run_baseline():
     cp = config['camera']
     
     # OVERRIDE: Use longer steps to see the ellipse clearly
-    TIME_STEP = 120.0   # 2 minutes
-    NUM_STEPS = 50      # 100 minutes total (approx 1 full orbit)
+    TIME_STEP = 180.0   # 2 minutes
+    NUM_STEPS = 30      # 100 minutes total (approx 1 full orbit)
     
     print(f"Time Step: {TIME_STEP} s")
     print(f"Duration:  {NUM_STEPS} steps ({NUM_STEPS*TIME_STEP/60:.1f} mins)")

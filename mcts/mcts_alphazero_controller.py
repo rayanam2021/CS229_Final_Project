@@ -45,7 +45,7 @@ class MCTSAlphaZeroCPU:
             noise = np.random.dirichlet([0.3] * len(actions)) 
             for i, action_idx in enumerate(actions):
                 # Increase noise weight from 0.25 to 0.5 for early training
-                root.children[action_idx].prior = 0.75 * root.children[action_idx].prior + 0.25 * noise[i]
+                root.children[action_idx].prior = 0.95 * root.children[action_idx].prior + 0.05 * noise[i]
 
         for _ in range(self.n_iters):
             node = root

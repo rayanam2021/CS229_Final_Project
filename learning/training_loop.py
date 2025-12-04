@@ -7,6 +7,8 @@ import sys
 import time
 import pandas as pd
 import imageio
+import matplotlib
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
