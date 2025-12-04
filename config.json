@@ -28,7 +28,7 @@
         "omega_chief_deg": 30.0
     },
     "control": {
-        "lambda_dv": 0.001
+        "lambda_dv": 0.01
     },
     "camera": {
         "fov_degrees": 10.0,
@@ -47,21 +47,21 @@
         "diy": 0.0
     },
     "monte_carlo": {
-        "num_episodes": 10,
+        "num_episodes": 20,
         "perturbation_bounds": {
             "da": 0.0,
-            "dl": 5.0,
-            "dex": 2.0,
-            "dey": 2.0,
-            "dix": 1.0,
-            "diy": 1.0
+            "dl": 20.0,
+            "dex": 10.0,
+            "dey": 10.0,
+            "dix": 10.0,
+            "diy": 10.0
         }
     },
     "network": {
         "hidden_dim": 128
     },
     "training": {
-        "batch_size": 64,
+        "batch_size": 32,
         "learning_rate": 0.0005,
         "mcts_iters": 100,
         "epochs_per_cycle": 5,

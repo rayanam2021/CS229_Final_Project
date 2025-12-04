@@ -1,0 +1,15 @@
+{
+  "run_id": "iters_1000_c_1.4_gamma_0.99_h_10_lam_5.0_seed_0",
+  "mcts_iters": 1000,
+  "mcts_c": 1.4,
+  "gamma": 0.99,
+  "max_horizon": 10,
+  "lambda_dv": 5.0,
+  "num_steps": 50,
+  "time_step": 120.0,
+  "seed": 0,
+  "desired_rollout_policy": "random",
+  "alpha_dv": 60.0,
+  "beta_tan": 0.1,
+  "num_processes": null
+}
