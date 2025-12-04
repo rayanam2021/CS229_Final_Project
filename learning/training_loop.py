@@ -9,6 +9,7 @@ import pandas as pd
 import imageio
 import matplotlib.pyplot as plt
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Import local modules
 from learning.training import SelfPlayTrainer
@@ -47,6 +48,133 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
     plt.close(fig)
     return frames
 
+def run_episode_worker(episode_idx, config, model_state_dict, run_dir):
+    """
+    Worker function to run a single episode in a separate process.
+    """
+    # Robust Seeding
+    seed = (int(time.time() * 1000) + episode_idx + os.getpid()) % 2**32
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    
+    # Re-initialize environment for this process
+    op, cp, rm = config['orbit'], config['camera'], config['initial_roe_meters']
+    ctrl = config.get('control', {'lambda_dv': 0.01})
+    am = op['a_chief_km'] * 1000.0
+    
+    # Base ROE & Perturbation
+    base_roe = np.array([rm['da'], rm['dl'], rm['dex'], rm['dey'], rm['dix'], rm['diy']], dtype=float) / am
+    b = config['monte_carlo']['perturbation_bounds']
+    p = np.array([np.random.uniform(-b[k], b[k]) for k in ['da','dl','dex','dey','dix','diy']])
+    initial_roe = base_roe + p/am
+    
+    # Setup Objects
+    grid = VoxelGrid(grid_dims=(20, 20, 20))
+    rso = GroundTruthRSO(grid)
+    
+    mdp = OrbitalMCTSModel(
+        op['a_chief_km'], op['e_chief'], np.deg2rad(op['i_chief_deg']), 
+        np.deg2rad(op['omega_chief_deg']), np.sqrt(op['mu_earth']/op['a_chief_km']**3), 
+        rso, cp, grid.dims, ctrl['lambda_dv'], 
+        config['simulation']['time_step'], config['simulation']['max_horizon']
+    )
+    
+    # Initial Observation (Open the eyes at t=0)
+    from roe.propagation import map_roe_to_rtn
+    r_init, _ = map_roe_to_rtn(initial_roe, mdp.a_chief, mdp.n_chief, f=0.0, omega=mdp.omega_chief)
+    pos_init = r_init * 1000.0
+    simulate_observation(grid, rso, cp, pos_init)
+
+    # Set Initial Entropy
+    initial_ent = grid.get_entropy()
+    mdp.initial_entropy = initial_ent
+    
+    state = OrbitalState(initial_roe, grid, 0.0)
+    
+    # Setup Network & MCTS
+    network = PolicyValueNetwork(grid_dims=grid.dims, num_actions=13, hidden_dim=128)
+    network.load_state_dict(model_state_dict)
+    network.eval() 
+    
+    tr_cfg = config['training']
+    mcts = MCTSAlphaZeroCPU(mdp, network, n_iters=tr_cfg['mcts_iters'], c_puct=tr_cfg['c_puct'], gamma=tr_cfg['gamma'])
+    
+    trajectory = []
+    camera_positions = []
+    view_directions = []
+    burn_indices = []
+    entropy_history = [initial_ent]
+    
+    camera_positions.append(pos_init)
+    view_directions.append(-pos_init/np.linalg.norm(pos_init))
+    
+    sim_time = 0.0
+    steps = config['simulation']['num_steps']
+    
+    # --- EPISODE LOOP ---
+    for step in range(steps):
+        # Progress logging (Minimal)
+        if step % 10 == 0:
+            print(f"[Worker Ep {episode_idx+1}] Step {step}/{steps} | Ent: {state.grid.get_entropy():.2f}")
+
+        pi, _, root_node = mcts.search(state)
+        
+        # Viz tree for first episode only
+        if episode_idx == 0 and (step == 0 or step % 5 == 0):
+            ep_dir = os.path.join(run_dir, f"episode_{episode_idx+1:02d}")
+            os.makedirs(ep_dir, exist_ok=True)
+            try:
+                mcts.export_tree_to_dot(root_node, episode_idx+1, step+1, os.path.join(ep_dir, "trees"))
+            except Exception: pass
+
+        action_idx = np.random.choice(len(pi), p=pi)
+        action = mdp.get_all_actions()[action_idx]
+        
+        if np.linalg.norm(action) > 1e-6: 
+            burn_indices.append(len(camera_positions)-1)
+        
+        next_state, reward = mdp.step(state, action)
+        
+        # Viz Data Propagation
+        t_burn = np.array([state.time])
+        from roe.dynamics import apply_impulsive_dv
+        imp_state = apply_impulsive_dv(state.roe, action, mdp.a_chief, mdp.n_chief, t_burn, mdp.e_chief, mdp.i_chief, mdp.omega_chief)
+        t_next = np.array([state.time + mdp.time_step])
+        from roe.propagation import propagateGeomROE
+        rho_n, _ = propagateGeomROE(imp_state, mdp.a_chief, mdp.e_chief, mdp.i_chief, mdp.omega_chief, mdp.n_chief, t_next, t0=state.time)
+        pos_next = rho_n[:,0]*1000
+        
+        camera_positions.append(pos_next)
+        view_directions.append(-pos_next/np.linalg.norm(pos_next))
+        
+        ent = next_state.grid.get_entropy()
+        entropy_history.append(ent)
+        
+        trajectory.append({
+            'roe': state.roe, 
+            'belief': state.grid.belief.copy(), 
+            'pi': pi, 
+            'reward': reward, 
+            'action': action, 
+            'time': sim_time,
+            'next_roe': next_state.roe
+        })
+        
+        state = next_state
+        sim_time += mdp.time_step
+
+    return {
+        'episode_idx': episode_idx,
+        'trajectory': trajectory,
+        'initial_entropy': initial_ent,
+        'final_entropy': entropy_history[-1],
+        'entropy_history': entropy_history,
+        'camera_positions': camera_positions,
+        'view_directions': view_directions,
+        'burn_indices': burn_indices,
+        'initial_roe': initial_roe
+    }
+
 class AlphaZeroTrainer:
     def __init__(self, config_path="config.json"):
         if not os.path.exists(config_path): raise FileNotFoundError
@@ -58,9 +186,11 @@ class AlphaZeroTrainer:
         os.makedirs(self.run_dir, exist_ok=True)
         
         self._setup_logging()
-        self.setup_environment()
         
-        self.network = PolicyValueNetwork(grid_dims=self.grid.dims, num_actions=13, hidden_dim=128)
+        # Explicitly define grid dimensions
+        self.grid_dims = (20, 20, 20)
+        
+        self.network = PolicyValueNetwork(grid_dims=self.grid_dims, num_actions=13, hidden_dim=128)
         
         ckpt_dir = os.path.join(self.run_dir, "checkpoints")
         self.trainer = SelfPlayTrainer(
@@ -84,23 +214,6 @@ class AlphaZeroTrainer:
         self.logger.addHandler(ch)
 
     def log(self, msg): self.logger.info(msg)
-
-    def setup_environment(self):
-        op, cp, rm = self.config['orbit'], self.config['camera'], self.config['initial_roe_meters']
-        ctrl = self.config.get('control', {'lambda_dv': 0.01})
-        am = op['a_chief_km'] * 1000.0
-        self.base_roe = np.array([rm['da'], rm['dl'], rm['dex'], rm['dey'], rm['dix'], rm['diy']], dtype=float) / am
-        self.grid = VoxelGrid(grid_dims=(20,20,20))
-        self.rso = GroundTruthRSO(self.grid)
-        self.mdp = OrbitalMCTSModel(op['a_chief_km'], op['e_chief'], np.deg2rad(op['i_chief_deg']), 
-                                    np.deg2rad(op['omega_chief_deg']), np.sqrt(op['mu_earth']/op['a_chief_km']**3), 
-                                    self.rso, cp, self.grid.dims, ctrl['lambda_dv'], 
-                                    self.config['simulation']['time_step'], self.config['simulation']['max_horizon'])
-
-    def get_perturbed_state(self):
-        b, am = self.config['monte_carlo']['perturbation_bounds'], self.config['orbit']['a_chief_km'] * 1000.0
-        p = np.array([np.random.uniform(-b[k], b[k]) for k in ['da','dl','dex','dey','dix','diy']])
-        return OrbitalState(self.base_roe + p/am, VoxelGrid(self.grid.dims), 0.0)
 
     def plot_history(self):
         history = self.trainer.training_history
@@ -128,142 +241,90 @@ class AlphaZeroTrainer:
 
     def run_training_loop(self):
         cfg = self.config
-        num_episodes, steps = cfg['monte_carlo']['num_episodes'], cfg['simulation']['num_steps']
+        num_episodes = cfg['monte_carlo']['num_episodes']
         tr_cfg = cfg['training']
         
-        with open(os.path.join(self.run_dir, "run_config.json"), "w") as f: json.dump(cfg, f, indent=4)
-        self.log(f"STARTING TRAINING: {num_episodes} Episodes")
+        num_workers = os.cpu_count() - 1 
+        if num_workers < 1: num_workers = 1
         
-        for episode in range(num_episodes):
-            ep_start_time = time.time()
-            ep_dir = os.path.join(self.run_dir, f"episode_{episode+1:02d}")
-            os.makedirs(ep_dir, exist_ok=True)
-            self.log(f"\n--- Episode {episode + 1}/{num_episodes} ---")
+        with open(os.path.join(self.run_dir, "run_config.json"), "w") as f: json.dump(cfg, f, indent=4)
+        self.log(f"STARTING TRAINING: {num_episodes} Episodes with {num_workers} parallel workers")
+        
+        episodes_completed = 0
+        parallel_batch_size = num_workers 
+        
+        while episodes_completed < num_episodes:
+            current_batch_size = min(parallel_batch_size, num_episodes - episodes_completed)
+            self.log(f"\n--- Spawning Batch of {current_batch_size} Episodes (Total {episodes_completed}/{num_episodes}) ---")
             
-            state = self.get_perturbed_state()
-            roe_str = np.array2string(state.roe * self.config['orbit']['a_chief_km'] * 1000.0, precision=1, separator=', ')
-            self.log(f"Initial ROE (m): {roe_str}")
+            current_weights = self.network.state_dict()
             
-            # --- CRITICAL UPDATE: Set Initial Entropy ---
-            # This allows the MDP to normalize rewards relative to the starting condition
-            initial_ent = state.grid.get_entropy()
-            self.mdp.initial_entropy = initial_ent
-            self.log(f"Initial Entropy: {initial_ent:.4f}")
-            # --------------------------------------------
-            
-            trajectory = []
-            camera_positions = []
-            view_directions = []
-            burn_indices = []
-            entropy_history = [initial_ent]
-            
-            # Initial Viz Pos
-            from roe.propagation import propagateGeomROE
-            rho_start, _ = propagateGeomROE(state.roe, self.mdp.a_chief, self.mdp.e_chief, self.mdp.i_chief, self.mdp.omega_chief, self.mdp.n_chief, np.array([0.0]), t0=0.0)
-            pos_start = rho_start[:,0]*1000
-            camera_positions.append(pos_start)
-            view_directions.append(-pos_start/np.linalg.norm(pos_start))
-            
-            mcts = MCTSAlphaZeroCPU(self.mdp, self.network, n_iters=tr_cfg['mcts_iters'], c_puct=tr_cfg['c_puct'], gamma=tr_cfg['gamma'])
-            sim_time = 0.0
-
-            for step in range(steps):
-                pi, _, root_node = mcts.search(state)
+            futures = []
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                for i in range(current_batch_size):
+                    global_idx = episodes_completed + i
+                    futures.append(
+                        executor.submit(run_episode_worker, global_idx, cfg, current_weights, self.run_dir)
+                    )
                 
-                # Export tree occasionally
-                if step == 0 or step % 5 == 0:
+                for future in as_completed(futures):
                     try:
-                        mcts.export_tree_to_dot(root_node, episode+1, step+1, os.path.join(ep_dir, "trees"))
+                        res = future.result()
+                        ep_idx = res['episode_idx']
+                        traj = res['trajectory']
+                        
+                        roe_str = np.array2string(res['initial_roe'] * self.config['orbit']['a_chief_km'] * 1000.0, precision=1, separator=', ')
+                        self.log(f"Ep {ep_idx+1} Finished | Init Ent: {res['initial_entropy']:.2f} -> Final: {res['final_entropy']:.2f} | Init ROE: {roe_str}")
+                        
+                        ep_dir = os.path.join(self.run_dir, f"episode_{ep_idx+1:02d}")
+                        os.makedirs(ep_dir, exist_ok=True)
+                        
+                        data_rows = []
+                        for i, t in enumerate(traj):
+                            row = {
+                                'time': t['time'],
+                                'step': i + 1,
+                                'action': t['action'].tolist(),
+                                'reward': t['reward'],
+                                'entropy': res['entropy_history'][i+1],
+                                'state': t['roe'].tolist(),
+                                'next_state': t['next_roe'].tolist()
+                            }
+                            data_rows.append(row)
+                        pd.DataFrame(data_rows).to_csv(os.path.join(ep_dir, "episode_data.csv"), index=False)
+                        
+                        plt.figure(); plt.plot(res['entropy_history'], marker='o'); plt.savefig(os.path.join(ep_dir, "entropy.png")); plt.close()
+                        
+                        if cfg['simulation'].get('visualize', True):
+                            frames = create_visualization_frames(ep_dir, VoxelGrid(self.grid_dims), GroundTruthRSO(VoxelGrid(self.grid_dims)), 
+                                                               self.config['camera'], 
+                                                               np.array(res['camera_positions']), np.array(res['view_directions']), res['burn_indices'])
+                            if frames:
+                                imageio.mimsave(os.path.join(ep_dir, "video.mp4"), frames, fps=5, macro_block_size=1)
+                                imageio.imwrite(os.path.join(ep_dir, "final_frame.png"), frames[-1])
+
+                        R = 0
+                        for i in reversed(range(len(traj))):
+                            t = traj[i]
+                            R = t['reward'] + tr_cfg['gamma'] * R
+                            self.trainer.add_to_replay_buffer(
+                                t['roe'], t['belief'], t['pi'], float(R),
+                                t['action'], t['reward'], t['next_roe'], t['time']
+                            )
+                            
                     except Exception as e:
-                        pass
-                
-                action_idx = np.random.choice(len(pi), p=pi)
-                action = self.mdp.get_all_actions()[action_idx]
-                
-                if np.linalg.norm(action) > 1e-6: burn_indices.append(len(camera_positions)-1)
-                
-                next_state, reward = self.mdp.step(state, action)
-                
-                # Viz Data Propagation
-                t_burn = np.array([state.time])
-                from roe.dynamics import apply_impulsive_dv
-                imp_state = apply_impulsive_dv(state.roe, action, self.mdp.a_chief, self.mdp.n_chief, t_burn, self.mdp.e_chief, self.mdp.i_chief, self.mdp.omega_chief)
-                t_next = np.array([state.time + self.mdp.time_step])
-                rho_n, _ = propagateGeomROE(imp_state, self.mdp.a_chief, self.mdp.e_chief, self.mdp.i_chief, self.mdp.omega_chief, self.mdp.n_chief, t_next, t0=state.time)
-                pos_next = rho_n[:,0]*1000
-                
-                camera_positions.append(pos_next)
-                view_directions.append(-pos_next/np.linalg.norm(pos_next))
-                
-                ent = next_state.grid.get_entropy()
-                entropy_history.append(ent)
-                
-                trajectory.append({
-                    'roe': state.roe, 
-                    'belief': state.grid.belief.copy(), 
-                    'pi': pi, 
-                    'reward': reward, 
-                    'action': action, 
-                    'time': sim_time,
-                    'next_roe': next_state.roe
-                })
-                
-                act_str = np.array2string(action, precision=3, separator=', ', suppress_small=True)
-                self.log(f"Step {step+1}: Act={act_str} m/s | Ent={ent:.4f} | Rew={reward:.4f}")
-                state = next_state
-                sim_time += self.mdp.time_step
+                        self.log(f"Worker failed: {e}")
+                        import traceback
+                        traceback.print_exc()
 
-            # --- CSV LOGGING ---
-            data_rows = []
-            for i, t in enumerate(trajectory):
-                # entropy_history[0] is initial, [i+1] is after step i
-                row = {
-                    'time': t['time'],
-                    'step': i + 1,
-                    'action': t['action'].tolist(),
-                    'reward': t['reward'],
-                    'entropy': entropy_history[i+1],
-                    'state': t['roe'].tolist(),
-                    'next_state': t['next_roe'].tolist()
-                }
-                data_rows.append(row)
-
-            df = pd.DataFrame(data_rows)
-            df.to_csv(os.path.join(ep_dir, "episode_data.csv"), index=False)
-            
-            plt.figure(); plt.plot(entropy_history, marker='o'); plt.savefig(os.path.join(ep_dir, "entropy.png")); plt.close()
-
-            if cfg['simulation'].get('visualize', True):
-                frames = create_visualization_frames(ep_dir, self.grid, self.rso, self.config['camera'], 
-                                                    np.array(camera_positions), np.array(view_directions), burn_indices)
-                if frames:
-                    imageio.mimsave(os.path.join(ep_dir, "video.mp4"), frames, fps=5, macro_block_size=1)
-                    imageio.imwrite(os.path.join(ep_dir, "final_frame.png"), frames[-1])
-
-            # --- Training Update ---
-            R = 0
-            for t in reversed(range(len(trajectory))):
-                R = trajectory[t]['reward'] + tr_cfg['gamma'] * R
-                
-                self.trainer.add_to_replay_buffer(
-                    trajectory[t]['roe'], 
-                    trajectory[t]['belief'], 
-                    trajectory[t]['pi'], 
-                    float(R),
-                    trajectory[t]['action'],
-                    trajectory[t]['reward'],
-                    trajectory[t]['next_roe'],
-                    trajectory[t]['time']
-                )
-            
             if len(self.trainer.replay_buffer) >= tr_cfg['batch_size']:
-                self.log("Training Network...")
+                self.log("Training Network on updated buffer...")
                 for _ in range(tr_cfg['epochs_per_cycle']):
                     l = self.trainer.train_epoch(5, tr_cfg['batch_size'])
                 self.log(f"Loss: P={l['policy_loss']:.4f} V={l['value_loss']:.4f}")
             
-            self.trainer.save_checkpoint(episode + 1)
-            self.log(f"Episode Time: {time.time()-ep_start_time:.1f}s")
+            self.trainer.save_checkpoint(episodes_completed + current_batch_size)
+            episodes_completed += current_batch_size
 
         self.plot_history()
         self.log("Complete.")

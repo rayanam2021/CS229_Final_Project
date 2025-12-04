@@ -107,7 +107,8 @@ def get_camera_rays(camera_pos, view_dir, fov_degrees, sensor_res):
 
 def _trace_ray(ray_origin, ray_dir, grid, rso, noise_params):
     eps = 1e-9
-    ray_dir_safe = np.where(np.abs(ray_dir) < eps, np.sign(ray_dir) * eps + eps, ray_dir)
+    ray_dir_safe = ray_dir.copy()
+    ray_dir_safe[np.abs(ray_dir_safe) < eps] = eps
     t1 = (grid.origin - ray_origin) / ray_dir_safe
     t2 = (grid.max_bound - ray_origin) / ray_dir_safe
     tn, tx = np.minimum(t1, t2), np.maximum(t1, t2)

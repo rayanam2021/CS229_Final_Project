@@ -134,9 +134,17 @@ def run_baseline():
     r_start, _ = map_roe_to_rtn(base_roe, mdp.a_chief, mdp.n_chief, f=0.0, omega=mdp.omega_chief)
     pos_start = r_start * 1000.0
     
+    # --- CRITICAL FIX: Initial Observation at t=0 ---
+    simulate_observation(grid, rso, cp, pos_start)
+    # Update entropy history with the entropy AFTER the first look
+    entropy_history[0] = grid.get_entropy()
+    # ------------------------------------------------
+    
     trajectory_points.append(pos_start)
     camera_positions.append(pos_start)
     view_directions.append(-pos_start / np.linalg.norm(pos_start))
+
+    print(f"Initial Entropy: {entropy_history[0]:.4f}")
 
     # 5. Simulation Loop
     for step in range(NUM_STEPS):
