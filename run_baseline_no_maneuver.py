@@ -89,8 +89,8 @@ def run_baseline():
     cp = config['camera']
     
     # OVERRIDE: Use longer steps to see the ellipse clearly
-    TIME_STEP = 180.0   # 2 minutes
-    NUM_STEPS = 30      # 100 minutes total (approx 1 full orbit)
+    TIME_STEP = 120.0   # 2 minutes
+    NUM_STEPS = 50      # 100 minutes total (approx 1 full orbit)
     
     print(f"Time Step: {TIME_STEP} s")
     print(f"Duration:  {NUM_STEPS} steps ({NUM_STEPS*TIME_STEP/60:.1f} mins)")
