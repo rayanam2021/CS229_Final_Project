@@ -199,8 +199,8 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
         state = next_state_propagated
         time_sim += time_step
 
-        # Early stopping: check after 10 steps if entropy reduction is stagnating
-        if step >= 9 and len(entropy_reductions) >= 10:  # At least 10 steps completed
+        # Early stopping: check after 30 steps if entropy reduction is stagnating
+        if step >= 29 and len(entropy_reductions) >= 30:  # At least 30 steps completed
             # Calculate average reduction over last 3-5 steps (or all available if less than 5)
             window_size = min(5, len(entropy_reductions))
             recent_reductions = entropy_reductions[-window_size:]

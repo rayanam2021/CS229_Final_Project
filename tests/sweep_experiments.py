@@ -17,22 +17,25 @@ if __name__ == "__main__":
     # Parallel CPU Configuration (6.15x speedup measured)
     NUM_PROCESSES = None  # None = cpu_count() - 1 (auto-detect)
 
-    # Sweep parameters for MCTS tree search (32 total configs: 2×2×2×2×2×1)
-    mcts_iters_values = [500, 2000]           # Number of simulations per planning step
-    mcts_c_values = [1.4, 2.0]                # UCB exploration constant
-    gamma_values = [0.95, 0.99]               # Discount factor for future rewards
-    max_horizon_values = [10, 20]             # Tree search depth (steps)
-    lambda_dv_values = [0.01, 0.1]            # Fuel cost weight in reward
-    seeds = [0]                               # Single seed per config
+    # Sweep parameters for MCTS tree search (9 total configs: 3×1×3×1)
+    mcts_iters_values = [1000]                # Number of simulations per planning step (FIXED - from iteration analysis)
+    mcts_c_values = [1.4, 2.0, 3.0]           # UCB exploration constant (c >= 1.4)
+    gamma_values = [0.99]                     # Discount factor for future rewards (FIXED - best performer)
+    max_horizon_values = [10]                 # Tree search depth (steps) (FIXED - best performer)
+    lambda_dv_values = [1.0, 0.5, 5.0]        # Fuel cost weight in reward (focus on larger values, 1.0 first)
+    seeds = [0]                               # Single seed per config (focus runs)
 
     print(f"\n{'='*70}")
-    print(f"MCTS PARAMETER SWEEP - PARALLEL CPU (6.15x speedup)")
+    print(f"MCTS PARAMETER SWEEP - OPTIMIZED CONFIGURATION")
     print(f"{'='*70}")
-    print(f"Parallel CPU Configuration:")
-    print(f"  Parallel processes: {NUM_PROCESSES or 'auto (cpu_count - 1)'}")
-    print(f"  Expected speedup: 6.15x (measured in benchmarks)")
-    print(f"  Total configs: 32 (2×2×2×2×2×1)")
-    print(f"  Estimated time: ~58 hours (~2.4 days)")
+    print(f"Fixed Parameters (from previous analysis):")
+    print(f"  Iterations: 1000 (2.78x better quality vs 500)")
+    print(f"  Horizon: 10 (38.6 avg vs 11.5 for h=20)")
+    print(f"  Gamma: 0.99 (29.87 avg vs 23.94 for γ=0.95)")
+    print(f"Sweep Parameters:")
+    print(f"  c: {mcts_c_values} (3 values, c >= 1.4)")
+    print(f"  λ_dv: {lambda_dv_values} (3 values, 1.0 tested first)")
+    print(f"  Total configs: 9 (3×1×3×1)")
     print(f"{'='*70}\n")
 
     # Initialize results file with header

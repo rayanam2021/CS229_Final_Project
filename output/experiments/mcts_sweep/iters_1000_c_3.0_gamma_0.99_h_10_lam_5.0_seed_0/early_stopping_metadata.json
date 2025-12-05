@@ -1,0 +1,7 @@
+{
+  "early_stopped": true,
+  "total_steps_completed": 33,
+  "num_steps_requested": 50,
+  "final_avg_reduction": 12.369687242472992,
+  "early_stop_threshold": 55.45177444479563
+}
