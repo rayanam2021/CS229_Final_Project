@@ -93,7 +93,7 @@ def inspect_checkpoint(checkpoint_path):
             for key, values in history.items():
                 if isinstance(values, list) and len(values) > 0:
                     print(f"  {key}: {len(values)} values")
-                    if len(values) >= 3:
+                    if len(values) >= 200:
                         print(f"    First 3: {values[:3]}")
                         print(f"    Last 3: {values[-3:]}")
                     else:
