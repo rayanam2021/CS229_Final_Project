@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# Import local modules
 from learning.training import SelfPlayTrainer
 from learning.policy_value_network import PolicyValueNetwork
 from mcts.mcts_alphazero_controller import MCTSAlphaZeroCPU

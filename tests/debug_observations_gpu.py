@@ -82,13 +82,13 @@ def test_entropy_decreasing_gpu(num_steps=8):
         print(f"Step {i+1}/{num_steps}: entropy={e_curr:.6f}, Δentropy={e_prev - e_curr:.6f}, NaNs={has_nan}")
 
         if has_nan:
-            print("❌ ERROR: NaNs detected — check clamping!")
+            print("ERROR: NaNs detected — check clamping!")
             break
 
         if e_curr < e_prev:
-            print("✔ Entropy decreased!")
+            print("Entropy decreased!")
         else:
-            print("⚠ WARNING: Entropy did not decrease (possible geometry/miss)")
+            print("WARNING: Entropy did not decrease (possible geometry/miss)")
 
         e_prev = e_curr
 
