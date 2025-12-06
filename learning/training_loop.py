@@ -181,25 +181,39 @@ class AlphaZeroTrainer:
     def __init__(self, config_path="config.json"):
         if not os.path.exists(config_path): raise FileNotFoundError
         with open(config_path, 'r') as f: self.config = json.load(f)
-        
+
         self.base_out_dir = self.config['simulation'].get('output_dir', 'output_training')
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.run_dir = os.path.join(self.base_out_dir, f"run_{timestamp}")
         os.makedirs(self.run_dir, exist_ok=True)
-        
+
+        # Determine device (prefer config, fallback to auto-detect)
+        device_config = self.config['training'].get('device', 'auto')
+        if device_config == 'auto':
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            self.device = device_config
+
         self._setup_logging()
-        
+
+        # Log device info
+        if self.device == 'cuda':
+            gpu_name = torch.cuda.get_device_name(0)
+            self.log(f"Using GPU: {gpu_name}")
+        else:
+            self.log(f"Using CPU (CUDA available: {torch.cuda.is_available()})")
+
         # Explicitly define grid dimensions
         self.grid_dims = (20, 20, 20)
-        
+
         self.network = PolicyValueNetwork(grid_dims=self.grid_dims, num_actions=13, hidden_dim=128)
-        
+
         ckpt_dir = os.path.join(self.run_dir, "checkpoints")
         self.trainer = SelfPlayTrainer(
-            network=self.network, 
+            network=self.network,
             learning_rate=self.config['training'].get('learning_rate', 0.001),
-            weight_decay=1e-4, 
-            device='cpu',
+            weight_decay=1e-4,
+            device=self.device,
             checkpoint_dir=ckpt_dir,
             max_buffer_size=self.config['training'].get('buffer_size', 10000)
         )
@@ -258,8 +272,12 @@ class AlphaZeroTrainer:
         while episodes_completed < num_episodes:
             current_batch_size = min(parallel_batch_size, num_episodes - episodes_completed)
             self.log(f"\n--- Spawning Batch of {current_batch_size} Episodes (Total {episodes_completed}/{num_episodes}) ---")
-            
-            current_weights = self.network.state_dict()
+
+            # Convert weights to CPU for multiprocessing (workers don't need GPU)
+            if self.device == 'cuda':
+                current_weights = {k: v.cpu() for k, v in self.network.state_dict().items()}
+            else:
+                current_weights = self.network.state_dict()
             
             futures = []
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
