@@ -31,18 +31,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 class ResumeAlphaZeroTrainer(AlphaZeroTrainer):
-    """
-    Extended AlphaZeroTrainer that can resume from a checkpoint.
-    """
 
     def __init__(self, run_dir: str, additional_episodes: int = None):
-        """
-        Initialize the trainer by loading from an existing run directory.
-
-        Args:
-            run_dir: Path to the previous run directory
-            additional_episodes: Number of additional episodes to run (if None, uses remaining from config)
-        """
         self.run_dir = run_dir
 
         # Load the run configuration
@@ -157,9 +147,6 @@ class ResumeAlphaZeroTrainer(AlphaZeroTrainer):
         return latest_episode
 
     def run_resumed_training(self):
-        """
-        Continue training from where it left off.
-        """
         cfg = self.config
         tr_cfg = cfg['training']
 

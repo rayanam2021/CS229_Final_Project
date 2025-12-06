@@ -41,10 +41,8 @@ class MCTSAlphaZeroCPU:
         # Add Dirichlet noise
         if root.is_expanded():
             actions = list(root.children.keys())
-            # Change 0.3 to something higher if you want more chaotic exploration
             noise = np.random.dirichlet([0.3] * len(actions)) 
             for i, action_idx in enumerate(actions):
-                # Increase noise weight from 0.25 to 0.5 for early training
                 root.children[action_idx].prior = 0.95 * root.children[action_idx].prior + 0.05 * noise[i]
 
         for _ in range(self.n_iters):
@@ -99,7 +97,6 @@ class MCTSAlphaZeroCPU:
         actions = self.model.get_all_actions() 
         
         for i, action_vec in enumerate(actions):
-            # Note: We store state in child for simplicity in this implementation
             next_state, _ = self.model.step(node.state, action_vec)
             child = Node(state=next_state, parent=node, action_idx=i, prior=policy_probs[i])
             node.children[i] = child
@@ -118,35 +115,26 @@ class MCTSAlphaZeroCPU:
         try:
             dot = Digraph(comment=f'MCTS Tree Ep{episode} Step{step}')
             
-            # --- FIXED LAYOUT PARAMS ---
-            # Remove strict size limits to allow tree to grow
-            # Use 'nodesep' to spread out siblings horizontally
             dot.attr(rankdir='TB', ratio='auto', nodesep='0.5', ranksep='1.0')
 
             def add_node(node, node_id):
-                # Color node based on value
                 color_hex = "#ffffff"
                 if node.visit_count > 0:
                     val = np.clip(node.value_mean, -1, 1) 
-                    # Map -1..1 to Red..Green
                     r = int(255 * (1 - max(0, val)))
                     g = int(255 * (1 - max(0, -val)))
                     b = 200
                     color_hex = f"#{r:02x}{g:02x}{b:02x}"
 
-                # Simplified label
                 label = f"N={node.visit_count}\nQ={node.value_mean:.2f}\nP={node.prior:.2f}"
                 dot.node(node_id, label, style='filled', fillcolor=color_hex, shape='ellipse', fontsize='10')
 
-                # --- FIXED: Sort but DO NOT prune to top 5 ---
                 sorted_children = sorted(node.children.items(), key=lambda x: x[1].visit_count, reverse=True)
                 
                 for action_idx, child in sorted_children:
-                    # Only visualize nodes with visits to keep tree readable
                     if child.visit_count > 0:
                         child_id = f"{node_id}_{action_idx}"
                         
-                        # Action string as edge label
                         act_vec = self.model.get_all_actions()[action_idx]
                         mag = np.linalg.norm(act_vec)
                         if mag < 1e-6: act_str = "No-Op"
