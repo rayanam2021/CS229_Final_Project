@@ -12,6 +12,13 @@ except ImportError:
     TORCH_AVAILABLE = False
     print("Warning: PyTorch not available. GPU acceleration disabled.")
 
+# CUDA kernel for ultra-fast ray tracing
+try:
+    from camera.cuda.cuda_wrapper import trace_rays_cuda, CUDA_AVAILABLE as CUDA_KERNEL_AVAILABLE
+except ImportError:
+    CUDA_KERNEL_AVAILABLE = False
+    print("Note: Custom CUDA kernel not available. Using PyTorch GPU fallback.")
+
 # --- Helper functions & Classes ---
 def logit(p):
     """Works with both numpy and torch tensors"""
@@ -121,24 +128,59 @@ class VoxelGrid:
                         grid_indices[2] < self.dims[2])
             return np.all((grid_indices >= 0) & (grid_indices < self.dims), axis=1)
 
-    def update_belief(self, hit_voxels: list, missed_voxels: list):
-        """Update belief state with observation results"""
+    def update_belief(self, hit_voxels, missed_voxels):
+        """Update belief state with observation results
+
+        Args:
+            hit_voxels: list of tuples OR torch.Tensor (M, 3) of hit coordinates
+            missed_voxels: list of tuples OR torch.Tensor (K, 3) of miss coordinates
+        """
         if self.use_torch:
             # GPU path
             hit_mask = torch.zeros(self.dims, dtype=torch.bool, device=self.device)
-            if hit_voxels:
+
+            # Handle both tensor and list inputs for hits
+            if isinstance(hit_voxels, torch.Tensor):
+                if len(hit_voxels) > 0:
+                    # GPU tensor path (fast)
+                    hit_indices = hit_voxels.long()
+                    # Bounds checking on GPU
+                    valid_mask = ((hit_indices >= 0).all(dim=1) &
+                                 (hit_indices[:, 0] < self.dims[0]) &
+                                 (hit_indices[:, 1] < self.dims[1]) &
+                                 (hit_indices[:, 2] < self.dims[2]))
+                    valid_hits = hit_indices[valid_mask]
+                    if len(valid_hits) > 0:
+                        hit_mask[valid_hits[:, 0], valid_hits[:, 1], valid_hits[:, 2]] = True
+            elif hit_voxels:
+                # List path (legacy, slower)
                 valid = [idx for idx in hit_voxels if self.is_in_bounds(np.array(idx))]
                 if valid:
                     hit_indices = torch.tensor(valid, dtype=torch.long, device=self.device)
                     hit_mask[hit_indices[:, 0], hit_indices[:, 1], hit_indices[:, 2]] = True
-            
+
             miss_mask = torch.zeros(self.dims, dtype=torch.bool, device=self.device)
-            if missed_voxels:
+
+            # Handle both tensor and list inputs for misses
+            if isinstance(missed_voxels, torch.Tensor):
+                if len(missed_voxels) > 0:
+                    # GPU tensor path (fast)
+                    miss_indices = missed_voxels.long()
+                    # Bounds checking on GPU
+                    valid_mask = ((miss_indices >= 0).all(dim=1) &
+                                 (miss_indices[:, 0] < self.dims[0]) &
+                                 (miss_indices[:, 1] < self.dims[1]) &
+                                 (miss_indices[:, 2] < self.dims[2]))
+                    valid_misses = miss_indices[valid_mask]
+                    if len(valid_misses) > 0:
+                        miss_mask[valid_misses[:, 0], valid_misses[:, 1], valid_misses[:, 2]] = True
+            elif missed_voxels:
+                # List path (legacy, slower)
                 valid = [idx for idx in missed_voxels if self.is_in_bounds(np.array(idx))]
                 if valid:
                     miss_indices = torch.tensor(valid, dtype=torch.long, device=self.device)
                     miss_mask[miss_indices[:, 0], miss_indices[:, 1], miss_indices[:, 2]] = True
-            
+
             self.log_odds[hit_mask] += self.L_hit
             self.log_odds[miss_mask] += self.L_miss
             self.belief = sigmoid(self.log_odds)
@@ -396,19 +438,36 @@ def _trace_ray(ray_origin, ray_dir, grid, rso, noise_params):
 def simulate_observation(grid, rso, camera_fn, servicer_rtn):
     """
     Simulate camera observation with optional GPU acceleration.
-    
-    Automatically uses GPU if grid.use_torch is True, otherwise uses CPU.
+
+    Priority: CUDA kernel > PyTorch GPU > CPU
     """
     cam_pos = servicer_rtn[-1] if servicer_rtn.ndim > 1 else servicer_rtn
     view_dir = -cam_pos / np.linalg.norm(cam_pos)
     rays = get_camera_rays(cam_pos, view_dir, camera_fn['fov_degrees'], camera_fn['sensor_res'])
-    
+
     if grid.use_torch and TORCH_AVAILABLE:
-        # GPU path - vectorized ray tracing
         ray_origins = torch.tensor(np.tile(cam_pos, (len(rays), 1)), dtype=torch.float32, device=grid.device)
         ray_dirs = torch.tensor(rays, dtype=torch.float32, device=grid.device)
-        
-        hits, misses = _trace_rays_gpu_vectorized(ray_origins, ray_dirs, grid, rso, camera_fn['noise_params'])
+        grid_origin_tensor = torch.tensor(grid.origin, dtype=torch.float32, device=grid.device)
+
+        # Try CUDA kernel first (fastest)
+        if CUDA_KERNEL_AVAILABLE and grid.device == 'cuda':
+            hits, misses = trace_rays_cuda(
+                ray_origins, ray_dirs, rso.shape, grid_origin_tensor,
+                grid.voxel_size,
+                camera_fn['noise_params']['p_hit_given_occupied'],
+                camera_fn['noise_params']['p_hit_given_empty'],
+                return_tensors=True  # Return GPU tensors for speed
+            )
+            # Update belief with GPU tensors directly (no CPU transfer)
+            grid.update_belief(hits, misses)
+            # Only convert to lists for return value if needed by caller
+            return hits, misses
+        else:
+            # Fall back to PyTorch GPU (slower but still GPU-accelerated)
+            hits, misses = _trace_rays_gpu_vectorized(ray_origins, ray_dirs, grid, rso, camera_fn['noise_params'])
+            grid.update_belief(list(hits), list(misses))
+            return list(hits), list(misses)
     else:
         # CPU path - sequential ray tracing (original)
         hits, misses = set(), set()
@@ -418,9 +477,8 @@ def simulate_observation(grid, rso, camera_fn, servicer_rtn):
             if s == 'hit':
                 hits.add(h)
         hits, misses = list(hits), list(misses)
-    
-    grid.update_belief(list(hits), list(misses))
-    return list(hits), list(misses)
+        grid.update_belief(hits, misses)
+        return hits, misses
 
 
 # --- VISUALIZATION (unchanged) ---

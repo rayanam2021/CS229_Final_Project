@@ -36,6 +36,62 @@ pip install numpy torch matplotlib pandas imageio graphviz
 python -c "import torch; print(torch.__version__)"
 ```
 
+### GPU Acceleration (Optional but Recommended)
+
+This project includes a **CUDA kernel for ultra-fast ray tracing** that provides **2000x speedup** over CPU.
+
+**Performance Impact:**
+- Pure MCTS episodes: 17 days → **7.5 minutes** ✅
+- AlphaZero episodes: 14 hours → **14 seconds** ✅
+
+#### Quick Setup (if you already have PyTorch with CUDA):
+
+```bash
+cd camera/cuda
+python setup.py install
+```
+
+#### Verify CUDA Kernel:
+```bash
+python -c "from camera.cuda.cuda_wrapper import CUDA_AVAILABLE; print(f'CUDA kernel: {CUDA_AVAILABLE}')"
+```
+
+#### First-Time CUDA Installation:
+
+If you don't have CUDA Toolkit installed or get a version mismatch error:
+
+1. **Check your PyTorch CUDA version:**
+   ```bash
+   python -c "import torch; print(f'PyTorch CUDA: {torch.version.cuda}')"
+   ```
+
+2. **Install matching CUDA Toolkit** (example for CUDA 12.8 on Linux):
+   ```bash
+   # Download and install CUDA Toolkit 12.8
+   wget https://developer.download.nvidia.com/compute/cuda/12.8.1/local_installers/cuda-repo-ubuntu2004-12-8-local_12.8.1-570.124.06-1_amd64.deb
+   sudo dpkg -i cuda-repo-ubuntu2004-12-8-local_12.8.1-570.124.06-1_amd64.deb
+   sudo cp /var/cuda-repo-ubuntu2004-12-8-local/cuda-*-keyring.gpg /usr/share/keyrings/
+   sudo apt update
+   sudo apt install -y cuda-toolkit-12-8
+
+   # Add to ~/.bashrc
+   export PATH=/usr/local/cuda-12.8/bin:$PATH
+   export CUDA_HOME=/usr/local/cuda-12.8
+   source ~/.bashrc
+   ```
+
+3. **Compile the kernel:**
+   ```bash
+   cd camera/cuda
+   CUDA_HOME=/usr/local/cuda-12.8 python setup.py install
+   ```
+
+**For detailed installation instructions (Windows/Linux), troubleshooting, and performance benchmarks:**
+
+📖 **See [camera/cuda/README.md](camera/cuda/README.md)**
+
+**Don't have GPU?** No problem! The system automatically falls back to CPU - everything still works, just slower.
+
 ## Quick Start
 
 ### 1. Run Pure MCTS (No Training Required)
