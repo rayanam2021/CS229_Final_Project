@@ -109,6 +109,13 @@ def run_episode_worker(episode_idx, config, model_state_dict, run_dir):
     network = PolicyValueNetwork(grid_dims=grid.dims, num_actions=13, hidden_dim=128)
     network.load_state_dict(model_state_dict)
     network.to(device)  # Move network to same device as grid (CPU or CUDA)
+
+    # OPTIMIZATION: torch.compile for 1.5-2x faster inference (PyTorch 2.0+)
+    try:
+        network = torch.compile(network, mode='reduce-overhead')
+    except Exception:
+        pass  # Fall back to eager mode if torch.compile not available
+
     network.eval()
 
     tr_cfg = config['training']

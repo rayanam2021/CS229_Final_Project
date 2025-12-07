@@ -1,6 +1,6 @@
 import numpy as np
 from roe.propagation import propagateGeomROE, rtn_to_roe, ROEDynamics, map_roe_to_rtn
-from roe.dynamics import apply_impulsive_dv, batch_propagate_roe
+from roe.dynamics import apply_impulsive_dv
 from camera.camera_observations import simulate_observation, calculate_entropy, VoxelGrid
 
 class OrbitalState:
@@ -59,83 +59,6 @@ class OrbitalMCTSModel:
     def actions(self, state):
         return self.get_all_actions()
 
-    def step_batch(self, state, actions):
-        """
-        VECTORIZED VERSION: Apply multiple actions in parallel.
-        This is 13x faster than calling step() 13 times sequentially.
-
-        Parameters:
-        -----------
-        state : OrbitalState
-            Current state
-        actions : list of np.ndarray
-            List of action vectors (each is 3D delta-v)
-
-        Returns:
-        --------
-        next_states : list of OrbitalState
-            One state per action
-        rewards : np.ndarray
-            Rewards for each action
-        """
-        num_actions = len(actions)
-        t_burn = np.array([state.time])
-
-        # 1-2. BATCHED: Apply all impulsive maneuvers and propagate (uses CUDA if available)
-        next_roes = batch_propagate_roe(
-            state.roe,
-            np.array(actions),
-            self.a_chief,
-            self.n_chief,
-            t_burn,
-            self.time_step,
-            e=self.e_chief,
-            i=self.i_chief,
-            omega=self.omega_chief
-        )
-
-        next_time = state.time + self.time_step
-        f_target = self.n_chief * next_time
-
-        # 3. VECTORIZED: Map to positions
-        positions = []
-        for next_roe in next_roes:
-            r_vec, _ = map_roe_to_rtn(next_roe, self.a_chief, self.n_chief, f=f_target, omega=self.omega_chief)
-            positions.append(r_vec * 1000.0)
-
-        # 4. Create grids and compute rewards
-        # Note: Can't easily vectorize observation simulation (each needs separate grid state)
-        next_states = []
-        rewards = []
-
-        for i, (next_roe, pos_child, action) in enumerate(zip(next_roes, positions, actions)):
-            # Clone grid (already optimized with .clone())
-            grid = VoxelGrid(self.grid_dims, use_torch=self.use_torch, device=self.device)
-
-            if self.use_torch:
-                import torch
-                grid.belief = state.grid.belief.clone()
-                grid.log_odds = state.grid.log_odds.clone()
-            else:
-                grid.belief[:] = state.grid.belief[:]
-                grid.log_odds[:] = state.grid.log_odds[:]
-
-            # Simulate observation
-            entropy_before = calculate_entropy(grid.belief)
-            simulate_observation(grid, self.rso, self.camera_fn, pos_child)
-            entropy_after = calculate_entropy(grid.belief)
-
-            info_gain = entropy_before - entropy_after
-            dv_cost = float(np.linalg.norm(action))
-            norm_gain = info_gain / self.initial_entropy
-            reward = norm_gain - self.lambda_dv * dv_cost
-
-            next_state = OrbitalState(next_roe, grid, next_time)
-            next_states.append(next_state)
-            rewards.append(reward)
-
-        return next_states, np.array(rewards)
-
     def step(self, state, action):
         """
         Apply action, propagate dynamics analytically, and compute reward.
@@ -155,19 +78,16 @@ class OrbitalMCTSModel:
         r_vec, _ = map_roe_to_rtn(next_roe, self.a_chief, self.n_chief, f=f_target, omega=self.omega_chief)
         pos_child = r_vec * 1000.0
 
-        # 4. Update Belief Grid (GPU-ENABLED with copy-on-write optimization)
-        # OPTIMIZATION: Clone grid with .clone() for PyTorch tensors
-        # This is faster than creating new VoxelGrid and copying arrays
+        # 4. Update Belief Grid (GPU-ENABLED)
         grid = VoxelGrid(self.grid_dims, use_torch=self.use_torch, device=self.device)
-
+        
+        # Copy belief state (handle both numpy and torch)
         if self.use_torch:
             import torch
-            # Use .clone() for proper copy-on-write semantics
-            grid.belief = state.grid.belief.clone()
-            grid.log_odds = state.grid.log_odds.clone()
+            grid.belief[:] = torch.as_tensor(state.grid.belief, device=self.device)[:]
+            grid.log_odds[:] = torch.as_tensor(state.grid.log_odds, device=self.device)[:]
         else:
-            # NumPy still needs explicit copy
-            grid.belief[:] = state.grid.belief[:]
+            grid.belief[:] = state.grid.belief[:]     
             grid.log_odds[:] = state.grid.log_odds[:]
 
         entropy_before = calculate_entropy(grid.belief)

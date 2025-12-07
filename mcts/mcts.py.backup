@@ -19,10 +19,9 @@ class Node:
             self.action = self.actions[action_index] if 0 <= action_index < len(self.actions) else None
 
         # Children and expansion tracking
-        # OPTIMIZATION: Use dict for O(1) lookup instead of list O(N) search
-        self.children = {}  # Maps action_index -> child Node
+        self.children = []
         self.untried_action_indices = list(range(len(self.actions)))  # indices of actions not expanded yet
-        # OPTIMIZATION: No need to shuffle - popping from end is fine
+        np.random.shuffle(self.untried_action_indices)
 
         # Statistics for UCB1 and value estimates
         num_actions = len(self.actions)
@@ -90,8 +89,7 @@ class MCTS:
             parent=node,
         )
 
-        # OPTIMIZATION: Use dict instead of list
-        node.children[action_index] = child
+        node.children.append(child)
 
         return child
 
@@ -159,11 +157,13 @@ class MCTS:
         if node.children:
             a_idx = self._select_ucb1_action_index(node)
 
-            # OPTIMIZATION: O(1) dict lookup instead of O(N) linear search
-            child = node.children.get(a_idx)
-            if child is None:
-                # Shouldn't happen, but handle gracefully
-                return 0.0
+            # Find child corresponding to this action index
+            # (there should be exactly one)
+            child = None
+            for ch in node.children:
+                if ch.action_index == a_idx:
+                    child = ch
+                    break
 
             return self._search(child, depth + 1)
 
@@ -179,8 +179,7 @@ class MCTS:
             label = f"ID={node.id}\nN={node.N}"
             dot.node(str(node.id), label)
 
-            # OPTIMIZATION: children is now dict, iterate over values
-            for child in node.children.values():
+            for child in node.children:
                 qs = ", ".join([f"{q:.2f}" for q in node.Q_sa])
                 edge_label = (
                     f"a={child.action_index}\n"

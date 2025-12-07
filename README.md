@@ -38,22 +38,39 @@ python -c "import torch; print(torch.__version__)"
 
 ### GPU Acceleration (Optional but Recommended)
 
-This project includes a **CUDA kernel for ultra-fast ray tracing** that provides **2000x speedup** over CPU.
+This project includes **CUDA kernels for both camera ray tracing and orbital propagation**.
 
-**Performance Impact:**
-- Pure MCTS episodes: 17 days → **7.5 minutes** ✅
-- AlphaZero episodes: 14 hours → **14 seconds** ✅
+**Performance with CUDA (RTX 2060):**
+- **Camera ray tracing**: 15.6x faster than CPU (713ms → 46ms per observation)
+- **ROE propagation**: 1.87x faster than CPU (perfect float64 accuracy)
+- **Combined impact**: Significant speedup for MCTS tree search
+
+**Without CUDA:** Automatic fallback to CPU/PyTorch implementations.
 
 #### Quick Setup (if you already have PyTorch with CUDA):
 
+**1. Compile Camera CUDA:**
 ```bash
 cd camera/cuda
 python setup.py install
 ```
 
-#### Verify CUDA Kernel:
+**2. Compile ROE CUDA:**
 ```bash
-python -c "from camera.cuda.cuda_wrapper import CUDA_AVAILABLE; print(f'CUDA kernel: {CUDA_AVAILABLE}')"
+cd roe/cuda
+nvcc -arch=sm_75 -shared -O3 -Xcompiler -fPIC -o libroe_propagation.so roe_propagation_kernel.cu
+```
+*Adjust `-arch=sm_75` for your GPU: sm_60 (Pascal), sm_70 (Volta), sm_75 (Turing), sm_80/86 (Ampere), sm_89 (Ada)*
+
+**3. Verify:**
+```bash
+python -c "from camera.cuda.cuda_wrapper import CUDA_AVAILABLE as CAM; from roe.dynamics import CUDA_ROE_AVAILABLE as ROE; print(f'Camera CUDA: {CAM}, ROE CUDA: {ROE}')"
+```
+
+**4. Run tests:**
+```bash
+python camera/cuda/test_cuda_ray_tracing.py
+python roe/cuda/test_cuda_roe_propagation.py
 ```
 
 #### First-Time CUDA Installation:
