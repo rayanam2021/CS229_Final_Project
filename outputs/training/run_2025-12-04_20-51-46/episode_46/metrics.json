@@ -1,0 +1,11 @@
+{
+    "episode": 46,
+    "duration_seconds": 2492.839431285858,
+    "duration_minutes": 41.5473238547643,
+    "cpu_memory_used_mb": 1058.48046875,
+    "cpu_memory_peak_mb": 1615.484375,
+    "gpu_memory_peak_mb": 1088.6279296875,
+    "initial_entropy": 3011.736328125,
+    "final_entropy": 233.75384521484375,
+    "entropy_reduction": 2777.9824829101562
+}
