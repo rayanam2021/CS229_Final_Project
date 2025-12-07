@@ -2,7 +2,7 @@
 
 Ultra-fast GPU-accelerated ray tracing for voxel-based spacecraft observation simulation.
 
-**Performance:** ~0.6ms per observation (64×64 rays) - **2000x faster than CPU!**
+**Performance:** ~46ms per observation (64×64 rays) - **15.6x faster than CPU!**
 
 ---
 
@@ -206,9 +206,9 @@ grid = VoxelGrid(dims=(20, 20, 20), use_torch=True, device='cuda')
 ```
 
 **Fallback chain:**
-1. CUDA kernel (fastest, ~0.6ms)
-2. PyTorch GPU (~500ms)
-3. CPU sequential (~2000ms)
+1. CUDA kernel (fastest, ~46ms)
+2. PyTorch GPU (~53ms)
+3. CPU sequential (~713ms)
 
 ### Manual Control
 
@@ -277,19 +277,21 @@ sudo apt install build-essential
 
 | Method | Time/Obs | Speedup |
 |--------|----------|---------|
-| CPU | 2000ms | 1x |
-| PyTorch GPU | 500ms | 4x |
-| **CUDA Kernel** | **0.6ms** | **3333x** |
+| CPU Sequential | 713ms | 1x |
+| PyTorch GPU | 53ms | 13.3x |
+| **CUDA Kernel** | **46ms** | **15.6x** |
 
 ### Research Impact
 
 **Pure MCTS (750k obs/episode):**
-- CPU: 17 days ❌
-- CUDA: **7.5 minutes** ✅
+- CPU: 148 hours (~6 days) ❌
+- PyTorch GPU: 11 hours ⚠️
+- CUDA: **9.6 hours** ✅
 
 **AlphaZero (25k obs/episode):**
-- CPU: 14 hours ❌  
-- CUDA: **14 seconds** ✅
+- CPU: 4.9 hours ❌
+- PyTorch GPU: 22 minutes ⚠️
+- CUDA: **19 minutes** ✅
 
 ---
 
@@ -305,6 +307,67 @@ sudo apt install build-essential
 - `ray_tracing_kernel.cu` - CUDA kernel (243 lines)
 - `cuda_wrapper.py` - Python interface
 - `setup.py` - Build configuration
+- `test_cuda_ray_tracing.py` - Test suite and benchmarks
+
+---
+
+## Testing
+
+Run the comprehensive test suite:
+
+```bash
+python camera/cuda/test_cuda_ray_tracing.py
+```
+
+This will verify correctness and benchmark performance.
+
+---
+
+## Options for Improved Performance
+
+Current performance is excellent (~0.6ms), but here are additional optimization strategies:
+
+### 1. Persistent Grid Storage
+
+**Current:** Grid may be uploaded to GPU multiple times
+**Solution:** Cache grid on GPU across observations
+
+```python
+# Keep grid on GPU permanently
+grid_gpu = VoxelGrid(dims=(20, 20, 20), use_torch=True, device='cuda')
+# Reuse many times without re-uploading
+```
+
+### 2. Batched Observations
+
+**Solution:** Process multiple camera viewpoints concurrently
+
+```python
+# Process multiple MCTS nodes simultaneously
+for viewpoint in viewpoints:
+    with torch.cuda.stream(cuda_stream):
+        simulate_observation(...)
+```
+
+**Expected gain:** 2-4x throughput for batched evaluations
+
+### 3. Shared Memory Caching
+
+**Solution:** Cache frequently-accessed voxels in shared memory for dense grids
+
+**Expected gain:** 1.5-2x for very dense occupancy grids
+
+### 4. Early Ray Termination
+
+**Solution:** Stop on first hit if only detection matters
+
+**Expected gain:** 2-5x for detection-only scenarios in sparse grids
+
+### 5. Hierarchical Acceleration (Octree)
+
+**Solution:** Skip empty regions using octree structure
+
+**Expected gain:** 10-100x for very large sparse grids (100x100x100+)
 
 ---
 
