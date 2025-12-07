@@ -127,6 +127,8 @@ class OrbitalMCTSModel:
             ])
             # Single GPU→CPU transfer for all entropy values
             info_gains = (entropies_before - entropies_after).cpu().numpy()
+            # CRITICAL: Free GPU tensors to prevent memory leak
+            del entropies_before, entropies_after
         else:
             entropies_after = [calculate_entropy(grid.belief) for grid in grids]
             info_gains = np.array([eb - ea for eb, ea in zip(entropies_before, entropies_after)])

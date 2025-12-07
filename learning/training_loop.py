@@ -1,6 +1,11 @@
+# OpenMP thread management
+# With 3 workers, auto thread count works fine (no OMP warnings observed)
+# OMP threads will be set by the main script (run_alphazero.py or resume_training.py)
+# No need to override here - let the parent script control it
+import os
+
 import numpy as np
 import torch
-import os
 import json
 import logging
 import sys
@@ -70,6 +75,13 @@ def run_episode_worker(episode_idx, config, model_state_dict, run_dir):
     Worker function to run a single episode in a separate process.
     GPU-ENABLED: Now supports GPU-accelerated ray tracing.
     """
+    import psutil
+
+    # Start timing and memory tracking
+    episode_start_time = time.time()
+    process = psutil.Process()
+    initial_memory_mb = process.memory_info().rss / 1024 / 1024
+
     # Robust Seeding
     seed = (int(time.time() * 1000) + episode_idx + os.getpid()) % 2**32
     np.random.seed(seed)
@@ -78,6 +90,17 @@ def run_episode_worker(episode_idx, config, model_state_dict, run_dir):
     # GPU Configuration (from config)
     use_gpu = config.get('gpu', {}).get('enable_ray_tracing', False)
     device = 'cuda' if (use_gpu and torch.cuda.is_available()) else 'cpu'
+
+    # Track GPU memory if available
+    gpu_memory_start_mb = None
+    gpu_memory_peak_mb = None
+    if use_gpu and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+        gpu_memory_start_mb = torch.cuda.memory_allocated() / 1024 / 1024
+
+    # Get thread configuration for metrics
+    omp_threads = os.environ.get('OMP_NUM_THREADS', 'auto')
+    omp_threads_config = config.get('gpu', {}).get('omp_threads_per_worker', 'auto')
 
     # Re-initialize environment for this process
     op, cp, rm = config['orbit'], config['camera'], config['initial_roe_meters']
@@ -159,6 +182,11 @@ def run_episode_worker(episode_idx, config, model_state_dict, run_dir):
             except Exception: pass
 
         action_idx = np.random.choice(len(pi), p=pi)
+
+        # CRITICAL: Free MCTS tree to prevent GPU memory leak
+        del root_node
+        if use_gpu and step % 5 == 0:  # Clear GPU cache every 5 steps
+            torch.cuda.empty_cache()
         action = mdp.get_all_actions()[action_idx]
 
         if np.linalg.norm(action) > 1e-6:
@@ -199,6 +227,21 @@ def run_episode_worker(episode_idx, config, model_state_dict, run_dir):
         state = next_state
         sim_time += mdp.time_step
 
+    # CRITICAL: Clean up GPU memory at end of episode
+    if use_gpu:
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    # Collect final metrics
+    episode_duration = time.time() - episode_start_time
+    final_memory_mb = process.memory_info().rss / 1024 / 1024
+    memory_used_mb = final_memory_mb - initial_memory_mb
+    peak_memory_mb = process.memory_info().rss / 1024 / 1024  # Peak RSS
+
+    if use_gpu and torch.cuda.is_available():
+        gpu_memory_peak_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+
     return {
         'episode_idx': episode_idx,
         'trajectory': trajectory,
@@ -208,7 +251,14 @@ def run_episode_worker(episode_idx, config, model_state_dict, run_dir):
         'camera_positions': camera_positions,
         'view_directions': view_directions,
         'burn_indices': burn_indices,
-        'initial_roe': initial_roe
+        'initial_roe': initial_roe,
+        # Performance metrics
+        'duration_seconds': episode_duration,
+        'cpu_memory_used_mb': memory_used_mb,
+        'cpu_memory_peak_mb': peak_memory_mb,
+        'gpu_memory_peak_mb': gpu_memory_peak_mb,
+        'omp_threads': omp_threads,
+        'omp_threads_config': omp_threads_config
     }
 
 class AlphaZeroTrainer:
@@ -413,11 +463,39 @@ class AlphaZeroTrainer:
         num_workers = os.cpu_count() - 1
         if num_workers < 1: num_workers = 1
 
+        # GPU Memory Management: Limit workers if using GPU ray tracing
+        # Auto-detects GPU memory and calculates safe worker count
+        if self.use_gpu and torch.cuda.is_available():
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+
+            # Memory allocation (based on profiling):
+            # - Network training: 500 MB (conservative buffer)
+            # - Per worker: 1800 MB (network + MCTS tree + ray tracing buffers + CUDA overhead + auto thread overhead)
+            #   Note: Workers use 960-1020 MB observed (CUDA fragmentation grows during MCTS)
+            #   With OMP_NUM_THREADS=auto (~12 threads on 12-core CPU), higher thread overhead
+            #   1800 MB accounts for auto thread overhead, worst-case fragmentation, and PyTorch memory pooling
+            # These values are tuned for RTX 2060 6GB (yields 3 workers); adjust if needed
+            reserve_mb = 500  # MB to reserve for main process (network training)
+            worker_mb = 1800  # MB per parallel episode worker (targets 3 workers on 6GB GPU with auto threads)
+
+            max_gpu_workers = int((gpu_memory_gb * 1024 - reserve_mb) / worker_mb)
+            if num_workers > max_gpu_workers:
+                self.log(f"⚠️  GPU Memory Limit: Reducing workers from {num_workers} to {max_gpu_workers}")
+                self.log(f"   GPU: {gpu_memory_gb:.1f} GB | ~1300 MB per worker (conservative allocation)")
+                num_workers = max(1, max_gpu_workers)
+
         with open(os.path.join(self.run_dir, "run_config.json"), "w") as f: json.dump(cfg, f, indent=4)
         self.log(f"STARTING TRAINING: {num_episodes} Episodes with {num_workers} parallel workers")
 
+        # Start overall training timer
+        training_start_time = time.time()
+        episode_times = []
+        episode_cpu_memories = []
+        episode_gpu_memories = []
+
         episodes_completed = 0
         parallel_batch_size = num_workers
+        current_workers = num_workers  # Track current worker count (can be reduced on OOM)
 
         while episodes_completed < num_episodes:
             current_batch_size = min(parallel_batch_size, num_episodes - episodes_completed)
@@ -425,13 +503,25 @@ class AlphaZeroTrainer:
 
             current_weights = self.network.state_dict()
 
+            # Track batch statistics
+            successful_episodes = 0
+            oom_errors = 0
+
+            # Dynamic work queue: workers pull episodes as they become available
+            # This prevents idle workers when some episodes finish faster than others
             futures = []
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                for i in range(current_batch_size):
+            episodes_submitted = 0
+            episodes_to_submit = current_batch_size
+
+            with ProcessPoolExecutor(max_workers=current_workers) as executor:
+                # Initially submit as many episodes as we have workers (or fewer if batch is small)
+                initial_submit = min(current_workers, episodes_to_submit)
+                for i in range(initial_submit):
                     global_idx = episodes_completed + i
                     futures.append(
                         executor.submit(run_episode_worker, global_idx, cfg, current_weights, self.run_dir)
                     )
+                    episodes_submitted += 1
 
                 for future in as_completed(futures):
                     try:
@@ -461,6 +551,29 @@ class AlphaZeroTrainer:
 
                         plt.figure(); plt.plot(res['entropy_history'], marker='o'); plt.savefig(os.path.join(ep_dir, "entropy.png")); plt.close()
 
+                        # Save performance metrics
+                        metrics = {
+                            'episode': ep_idx + 1,
+                            'duration_seconds': res['duration_seconds'],
+                            'duration_minutes': res['duration_seconds'] / 60,
+                            'cpu_memory_used_mb': res['cpu_memory_used_mb'],
+                            'cpu_memory_peak_mb': res['cpu_memory_peak_mb'],
+                            'gpu_memory_peak_mb': res['gpu_memory_peak_mb'] if res['gpu_memory_peak_mb'] else 'N/A',
+                            'initial_entropy': res['initial_entropy'],
+                            'final_entropy': res['final_entropy'],
+                            'entropy_reduction': res['initial_entropy'] - res['final_entropy'],
+                            'omp_threads_env': res.get('omp_threads', 'auto'),
+                            'omp_threads_config': res.get('omp_threads_config', 'auto')
+                        }
+                        with open(os.path.join(ep_dir, "metrics.json"), 'w') as f:
+                            json.dump(metrics, f, indent=4)
+
+                        # Collect for overall summary
+                        episode_times.append(res['duration_seconds'])
+                        episode_cpu_memories.append(res['cpu_memory_peak_mb'])
+                        if res['gpu_memory_peak_mb']:
+                            episode_gpu_memories.append(res['gpu_memory_peak_mb'])
+
                         if cfg['simulation'].get('visualize', True):
                             frames = create_visualization_frames(
                                 ep_dir,
@@ -486,10 +599,27 @@ class AlphaZeroTrainer:
                                 t['action'], t['reward'], t['next_roe'], t['time']
                             )
 
+                        successful_episodes += 1
+
+                        # Dynamic work queue: submit next episode if available
+                        if episodes_submitted < episodes_to_submit:
+                            next_idx = episodes_completed + episodes_submitted
+                            futures.append(
+                                executor.submit(run_episode_worker, next_idx, cfg, current_weights, self.run_dir)
+                            )
+                            episodes_submitted += 1
+                            self.log(f"Worker freed - submitting episode {next_idx+1}")
+
                     except Exception as e:
-                        self.log(f"Worker failed: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        # Check if it's an OOM error
+                        error_str = str(e)
+                        if "CUDA out of memory" in error_str or "OutOfMemoryError" in error_str:
+                            oom_errors += 1
+                            self.log(f"Worker failed with OOM: {e}")
+                        else:
+                            self.log(f"Worker failed: {e}")
+                            import traceback
+                            traceback.print_exc()
 
             if len(self.trainer.replay_buffer) >= self.batch_size:
                 self.log("Training Network on updated buffer...")
@@ -499,8 +629,72 @@ class AlphaZeroTrainer:
                 train_time = time.time() - train_start
                 self.log(f"Loss: P={l['policy_loss']:.4f} V={l['value_loss']:.4f} T={l['total_loss']:.4f} | Time: {train_time:.2f}s")
 
-            self.trainer.save_checkpoint(episodes_completed + current_batch_size)
-            episodes_completed += current_batch_size
+            # Only save checkpoint and advance if at least one episode succeeded
+            if successful_episodes > 0:
+                self.log(f"Batch completed: {successful_episodes}/{current_batch_size} episodes successful")
+                self.trainer.save_checkpoint(episodes_completed + current_batch_size)
+                episodes_completed += current_batch_size
+            else:
+                self.log(f"⚠️  Batch failed: 0/{current_batch_size} episodes successful - skipping checkpoint (no new data)")
+
+                # Check if failure was due to OOM and if we can reduce workers
+                if oom_errors > 0 and current_workers > 1:
+                    # Reduce worker count and retry
+                    old_workers = current_workers
+                    current_workers = max(1, current_workers - 2)  # Reduce by 2, minimum 1
+                    self.log(f"")
+                    self.log(f"🔄 RETRYING BATCH WITH REDUCED WORKERS:")
+                    self.log(f"   OOM errors detected: {oom_errors}/{current_batch_size} workers")
+                    self.log(f"   Reducing workers: {old_workers} → {current_workers}")
+                    self.log(f"   Retrying episodes: {episodes_completed+1} to {episodes_completed+current_batch_size}")
+                    self.log(f"")
+                    # Do NOT advance episodes_completed - retry same batch
+                elif oom_errors > 0 and current_workers == 1:
+                    # Already at minimum workers - cannot reduce further
+                    self.log(f"")
+                    self.log(f"❌ FATAL: OOM with single worker - cannot reduce further")
+                    self.log(f"   Consider:")
+                    self.log(f"   1. Reducing MCTS iterations (currently {tr_cfg['mcts_iters']})")
+                    self.log(f"   2. Reducing grid resolution")
+                    self.log(f"   3. Using smaller network architecture")
+                    self.log(f"")
+                    # Skip this batch and move on
+                    episodes_completed += current_batch_size
+                else:
+                    # Non-OOM failure - skip batch
+                    self.log(f"⚠️  Batch failed for non-OOM reasons - skipping")
+                    episodes_completed += current_batch_size
 
         self.plot_history()
+
+        # Save overall training summary
+        training_duration = time.time() - training_start_time
+        summary = {
+            'total_episodes': num_episodes,
+            'total_duration_seconds': training_duration,
+            'total_duration_minutes': training_duration / 60,
+            'total_duration_hours': training_duration / 3600,
+            'average_episode_duration_seconds': np.mean(episode_times) if episode_times else 0,
+            'min_episode_duration_seconds': np.min(episode_times) if episode_times else 0,
+            'max_episode_duration_seconds': np.max(episode_times) if episode_times else 0,
+            'average_cpu_memory_mb': np.mean(episode_cpu_memories) if episode_cpu_memories else 0,
+            'peak_cpu_memory_mb': np.max(episode_cpu_memories) if episode_cpu_memories else 0,
+            'average_gpu_memory_mb': np.mean(episode_gpu_memories) if episode_gpu_memories else 'N/A',
+            'peak_gpu_memory_mb': np.max(episode_gpu_memories) if episode_gpu_memories else 'N/A',
+            'final_workers': current_workers,
+            'initial_workers': num_workers,
+            'omp_threads_per_worker': cfg.get('gpu', {}).get('omp_threads_per_worker', 'auto')
+        }
+
+        with open(os.path.join(self.run_dir, "training_summary.json"), 'w') as f:
+            json.dump(summary, f, indent=4)
+
+        self.log("\n=== TRAINING SUMMARY ===")
+        self.log(f"Total episodes: {num_episodes}")
+        self.log(f"Total duration: {training_duration/3600:.2f} hours ({training_duration/60:.1f} minutes)")
+        self.log(f"Average episode: {np.mean(episode_times) if episode_times else 0:.1f} seconds")
+        self.log(f"Peak CPU memory: {np.max(episode_cpu_memories) if episode_cpu_memories else 0:.1f} MB")
+        if episode_gpu_memories:
+            self.log(f"Peak GPU memory: {np.max(episode_gpu_memories):.1f} MB")
+        self.log(f"Workers used: {num_workers} → {current_workers}")
         self.log("Complete.")

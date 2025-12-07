@@ -5,6 +5,7 @@ This project implements reinforcement learning approaches for active information
 ## Table of Contents
 - [Overview](#overview)
 - [Installation](#installation)
+  - [GPU Memory Management](#gpu-memory-management)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Running Experiments](#running-experiments)
@@ -114,6 +115,72 @@ If you don't have CUDA Toolkit installed or get a version mismatch error:
 
 **Don't have GPU?** No problem! The system automatically falls back to CPU - everything still works, just slower.
 
+### GPU Memory Management
+
+The training system includes **automatic GPU memory management** to prevent out-of-memory (OOM) errors:
+
+**Automatic Worker Limiting:**
+- Detects available GPU memory at startup
+- Calculates safe worker count based on profiling data
+- **Default allocation (RTX 2060 6GB)**: 5 parallel workers
+  - 500 MB reserved for network training
+  - 1150 MB per worker (accounts for MCTS tree memory + CUDA overhead)
+  - OMP thread limiting ensures no thread contention
+
+**Adaptive Worker Reduction:**
+- Monitors for CUDA OOM errors during training
+- Automatically reduces workers by 2 when entire batch fails
+- Retries failed episodes with fewer workers
+- Minimum: 1 worker (provides actionable advice if OOM persists)
+
+**Memory profiling data:**
+- Observed worker usage: 960-1020 MB per worker
+- Allocation includes safety margin for CUDA fragmentation and PyTorch memory pooling
+
+**Thread Management:**
+- Sets `OMP_NUM_THREADS=1` to prevent thread contention
+- Each worker uses 1 thread for CPU operations
+- Parallelism comes from multiple workers, not multiple threads per worker
+- Eliminates OMP warnings and reduces memory pressure
+
+**For GPUs with different memory:**
+- System auto-detects GPU memory and adjusts worker count
+- Formula: `max_workers = (gpu_memory_mb - 500) / 1150`
+- Examples:
+  - 4GB GPU → 3 workers
+  - 8GB GPU → 6 workers
+  - 12GB GPU → 10 workers
+
+**Manual tuning options:**
+
+1. **Adjust worker memory allocation** (if OOM persists):
+   Edit `learning/training_loop.py` or `resume_training.py`:
+   ```python
+   reserve_mb = 500   # Memory for network training
+   worker_mb = 1150   # Memory per worker (reduce if OOM persists)
+   ```
+
+2. **Adjust CPU threads per worker** (advanced optimization):
+   Edit `config.json`:
+   ```json
+   "gpu": {
+       "enable_ray_tracing": true,
+       "omp_threads_per_worker": 1
+   }
+   ```
+
+   **Recommendations:**
+   - `1` thread: **Best for GPU-heavy workloads** (default, recommended)
+     - Allows more workers to fit in memory
+     - No thread contention
+     - Optimal when 90%+ of work is on GPU
+   - `2-3` threads: For CPU-heavy operations
+     - Faster numpy operations within each worker
+     - Fewer total workers due to memory overhead
+     - Only beneficial if >20% of work is CPU-bound
+
+   **Trade-off:** More threads per worker = fewer total workers
+
 ## Quick Start
 
 ### 1. Run Pure MCTS (No Training Required)
@@ -171,9 +238,18 @@ This trains a neural network via self-play with **heavy optimizations**:
 python resume_training.py --run_dir outputs/training/run_2025-12-04_11-08-29
 ```
 
-Optional: specify additional episodes
+**Features:**
+- **Automatic gap detection**: Finds and fills missing episodes (e.g., if episodes 45-62 failed)
+- **Adaptive worker reduction**: Automatically retries failed batches with fewer workers on OOM
+- **Smart checkpointing**: Skips duplicate checkpoints when batches fail
+
+Optional flags:
 ```bash
+# Specify additional episodes beyond original training plan
 python resume_training.py --run_dir outputs/training/run_2025-12-04_11-08-29 --additional_episodes 20
+
+# Disable automatic gap filling (only continue from last checkpoint)
+python resume_training.py --run_dir outputs/training/run_2025-12-04_11-08-29 --no-fill-gaps
 ```
 
 ### 4. Run Baseline (No Maneuvers)

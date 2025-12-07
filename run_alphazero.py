@@ -1,3 +1,23 @@
+# OpenMP thread management
+# With 3 workers, auto thread count works fine (no OMP warnings observed)
+# Only limit threads if using 4+ workers to prevent memory contention
+import os
+import json
+
+# Load config to get thread count setting
+with open('config.json', 'r') as f:
+    config = json.load(f)
+
+# Get thread setting from config (None/"auto" means don't set, use system default)
+omp_threads = config.get('gpu', {}).get('omp_threads_per_worker', 'auto')
+
+if omp_threads != 'auto':
+    omp_threads = str(omp_threads)
+    os.environ['OMP_NUM_THREADS'] = omp_threads
+    os.environ['MKL_NUM_THREADS'] = omp_threads
+    os.environ['OPENBLAS_NUM_THREADS'] = omp_threads
+    os.environ['NUMEXPR_NUM_THREADS'] = omp_threads
+
 import multiprocessing
 
 # CRITICAL: Set multiprocessing to 'spawn' mode for CUDA compatibility

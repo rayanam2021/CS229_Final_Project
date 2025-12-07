@@ -104,13 +104,16 @@ class MCTSAlphaZeroCPU:
         policy_probs = torch.softmax(policy_logits, dim=1).squeeze().cpu().numpy()
         value_scalar = value.cpu().item()
 
-        actions = self.model.get_all_actions() 
-        
+        # CRITICAL: Free GPU tensors immediately to prevent memory leak
+        del roe_tensor, grid_tensor, policy_logits, value
+
+        actions = self.model.get_all_actions()
+
         for i, action_vec in enumerate(actions):
             next_state, _ = self.model.step(node.state, action_vec)
             child = Node(state=next_state, parent=node, action_idx=i, prior=policy_probs[i])
             node.children[i] = child
-            
+
         return value_scalar
 
     def _backpropagate(self, search_path, value):
