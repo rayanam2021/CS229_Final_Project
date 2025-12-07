@@ -22,12 +22,12 @@ def get_dimensionless_roe(roe_meters, a_chief_km):
     vec_meters = np.array([da, dl, dex, dey, dix, diy], dtype=float)
     return vec_meters / a_chief_m
 
-def load_config(path="config.json"):
+def load_config(path):
     with open(path, "r") as f:
         return json.load(f)
 
 if __name__ == "__main__":
-    config_path = "config.json"
+    config_path = "config_pure_mcts.json"
     if not os.path.exists(config_path):
         print(f"Error: {config_path} not found. Please create it first.")
         exit(1)
@@ -59,7 +59,6 @@ if __name__ == "__main__":
     with open(os.path.join(out_folder, "run_config.json"), "w") as f:
         json.dump(config, f, indent=4)
 
-    # 5. Run Simulation
     run_orbital_camera_sim_full_mcts(
         sim_config=sim_conf,
         orbit_params=orbit_conf,

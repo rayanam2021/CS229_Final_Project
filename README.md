@@ -41,7 +41,7 @@ python -c "import torch; print(torch.__version__)"
 ### 1. Run Pure MCTS (No Training Required)
 
 ```bash
-python main.py
+python run_pure_mcts.py
 ```
 
 This runs a single episode using pure MCTS planning:
