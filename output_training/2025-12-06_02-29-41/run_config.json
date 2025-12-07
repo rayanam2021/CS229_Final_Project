@@ -1,0 +1,75 @@
+{
+    "simulation": {
+        "run_id": "random_policy_1",
+        "num_steps": 50,
+        "time_step": 120.0,
+        "verbose": true,
+        "visualize": true,
+        "output_dir": "output_training",
+        "seed": 0,
+        "use_torch_grid": true,
+        "grid_device": "cuda"
+    },
+    "mcts": {
+        "max_horizon": 5,
+        "desired_rollout_policy": "random",
+        "mcts_iters": 100,
+        "mcts_c": 1.4,
+        "gamma": 0.99,
+        "lambda_dv": 0.01,
+        "alpha_dv": 60.0,
+        "beta_tan": 0.1
+    },
+    "orbit": {
+        "mu_earth": 398600.4418,
+        "a_chief_km": 7000.0,
+        "e_chief": 0.001,
+        "i_chief_deg": 98.0,
+        "omega_chief_deg": 30.0
+    },
+    "control": {
+        "lambda_dv": 0.01
+    },
+    "camera": {
+        "fov_degrees": 10.0,
+        "sensor_res": [
+            64,
+            64
+        ],
+        "noise_params": {
+            "p_hit_given_occupied": 0.95,
+            "p_hit_given_empty": 0.001
+        }
+    },
+    "initial_roe_meters": {
+        "da": 0.0,
+        "dl": 200.0,
+        "dex": 100.0,
+        "dey": 0.0,
+        "dix": 50.0,
+        "diy": 0.0
+    },
+    "monte_carlo": {
+        "num_episodes": 20,
+        "perturbation_bounds": {
+            "da": 0.0,
+            "dl": 20.0,
+            "dex": 10.0,
+            "dey": 10.0,
+            "dix": 10.0,
+            "diy": 10.0
+        }
+    },
+    "network": {
+        "hidden_dim": 128
+    },
+    "training": {
+        "batch_size": 32,
+        "learning_rate": 0.0005,
+        "mcts_iters": 100,
+        "epochs_per_cycle": 5,
+        "buffer_size": 20000,
+        "c_puct": 1.4,
+        "gamma": 0.99
+    }
+}
