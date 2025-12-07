@@ -71,11 +71,9 @@ class OrbitalMCTSModel:
             e=self.e_chief, i=self.i_chief, omega=self.omega_chief
         )
 
-        # 2. Propagate Natural Motion
         next_roe = self.dyn_model.propagate(roe_after_impulse, self.time_step, second_order=True)
         next_time = state.time + self.time_step
 
-        # 3. Calculate Position for Observation
         f_target = self.n_chief * next_time 
         r_vec, _ = map_roe_to_rtn(next_roe, self.a_chief, self.n_chief, f=f_target, omega=self.omega_chief)
         pos_child = r_vec * 1000.0
@@ -99,24 +97,16 @@ class OrbitalMCTSModel:
         info_gain = entropy_before - entropy_after
         dv_cost = float(np.linalg.norm(action))
 
-        # --- REWARD NORMALIZATION ---
         # Normalize the gain by the episode's initial entropy
         norm_gain = info_gain / self.initial_entropy
         
-        # IMPORTANT: Since reward is now ~0.1 instead of ~500, 
-        # lambda_dv must be balanced to match this new magnitude.
         reward = norm_gain - self.lambda_dv * dv_cost
 
-        # 5. Create Next State
         next_state = OrbitalState(roe=next_roe, grid=grid, time=next_time)
 
         return next_state, reward
 
     def rollout_policy(self, state):
-        """
-        Simple random rollout policy for Standard MCTS (non-AlphaZero).
-        Selects a random action from the available action space.
-        """
         actions = self.get_all_actions()
         idx = np.random.randint(len(actions))
         return actions[idx]

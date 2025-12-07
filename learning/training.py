@@ -83,7 +83,6 @@ class SelfPlayTrainer:
         indices = np.random.choice(len(self.replay_buffer), size=batch_size, replace=False)
         samples = [self.replay_buffer[i] for i in indices]
 
-        # 1. State Inputs (for Network)
         orbital_states = torch.tensor(np.array([s[0] for s in samples]), dtype=torch.float32, device=self.device)
         
         belief_grids_list = []
@@ -99,11 +98,9 @@ class SelfPlayTrainer:
         else:
             belief_grids = torch.tensor(np.array(belief_grids_list), dtype=torch.float32, device=self.device)
 
-        # 2. Targets (for Loss)
         policies_mcts = torch.tensor(np.array([s[2] for s in samples]), dtype=torch.float32, device=self.device)
         returns = torch.tensor(np.array([s[3] for s in samples]), dtype=torch.float32, device=self.device)
 
-        # 3. Extra Data (unused in standard loss but kept for potential aux tasks)
         actions = torch.tensor(np.array([s[4] for s in samples]), dtype=torch.float32, device=self.device)
         rewards = torch.tensor(np.array([s[5] for s in samples]), dtype=torch.float32, device=self.device)
         next_states = torch.tensor(np.array([s[6] for s in samples]), dtype=torch.float32, device=self.device)
@@ -152,10 +149,8 @@ class SelfPlayTrainer:
             for key in epoch_losses:
                 epoch_losses[key].append(losses[key])
 
-        # --- UPDATED: Calculate averages AND store them in history ---
         avg_losses = {k: np.mean(v) for k, v in epoch_losses.items()}
         
-        # Append to internal history
         for key in ["policy_loss", "value_loss", "total_loss"]:
             if key in self.training_history:
                 self.training_history[key].append(float(avg_losses[key]))
