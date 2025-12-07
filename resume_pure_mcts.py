@@ -11,6 +11,11 @@ import json
 import os
 import numpy as np
 from datetime import datetime
+import multiprocessing
+
+# CRITICAL: Set multiprocessing start method to 'spawn' for CUDA compatibility
+if multiprocessing.get_start_method(allow_none=True) != 'spawn':
+    multiprocessing.set_start_method('spawn', force=True)
 
 from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
 
@@ -70,6 +75,7 @@ def main():
         control_params=config['control'],
         initial_state_roe=initial_state_roe,
         out_folder=checkpoint_dir,
+        mcts_params=config.get('mcts', {}),
         resume_from=args.checkpoint,
         checkpoint_interval=args.checkpoint_interval
     )

@@ -2,6 +2,13 @@ import os
 import json
 import numpy as np
 from datetime import datetime
+import multiprocessing
+
+# CRITICAL: Set multiprocessing start method to 'spawn' for CUDA compatibility
+if __name__ == "__main__":
+    if multiprocessing.get_start_method(allow_none=True) != 'spawn':
+        multiprocessing.set_start_method('spawn', force=True)
+
 from simulation.scenario_full_mcts import run_orbital_camera_sim_full_mcts
 
 def get_dimensionless_roe(roe_meters, a_chief_km):
@@ -38,8 +45,9 @@ if __name__ == "__main__":
     orbit_conf = config['orbit']
     cam_conf = config['camera']
     roe_meters = config['initial_roe_meters']
-    
+
     ctrl_conf = config.get('control', {'lambda_dv': 0.0})
+    mcts_conf = config.get('mcts', {})
     
     a_chief_km = orbit_conf['a_chief_km']
     initial_roe_dimless = get_dimensionless_roe(roe_meters, a_chief_km)
@@ -66,5 +74,6 @@ if __name__ == "__main__":
         control_params=ctrl_conf,
         initial_state_roe=initial_roe_dimless,
         out_folder=out_folder,
+        mcts_params=mcts_conf,
         checkpoint_interval=10  # Save checkpoint every 10 steps
     )

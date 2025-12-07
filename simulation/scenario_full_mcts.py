@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import os
 import json
 import time
-from mcts.mcts_controller import MCTSController
+from mcts.mcts_controller_parallel import MCTSControllerParallel
 from roe.propagation import propagateGeomROE, rtn_to_roe
 from roe.dynamics import apply_impulsive_dv
 import imageio
@@ -119,11 +119,12 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
     plt.close(fig)
     return frames
 
-def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, control_params, initial_state_roe, out_folder, resume_from=None, checkpoint_interval=10):
+def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, control_params, initial_state_roe, out_folder, mcts_params=None, resume_from=None, checkpoint_interval=10):
     """
     Run Pure MCTS simulation with checkpointing support.
 
     Args:
+        mcts_params: MCTS configuration parameters (default: None)
         resume_from: Path to checkpoint file to resume from (default: None for new run)
         checkpoint_interval: Save checkpoint every N steps (default: 10)
     """
@@ -132,6 +133,12 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
     time_step = sim_config.get('time_step', 30.0)
     verbose = sim_config.get('verbose', False)
     visualize = sim_config.get('visualize', True)
+
+    # MCTS parameters
+    if mcts_params is None:
+        mcts_params = {}
+    mcts_iters = mcts_params.get('mcts_iters', 3000)
+    num_workers = mcts_params.get('num_workers', None)  # None = auto (CPU count - 1)
 
     print("Starting Orbital Camera Simulation...")
     print(f"   Time step: {time_step} seconds")
@@ -158,9 +165,10 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
     else:
         print("⚠️  GPU not available, using CPU")
 
-    controller = MCTSController(mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
-                                time_step=time_step, horizon=horizon,
-                                lambda_dv=lambda_dv, use_torch=use_gpu, device=device)
+    controller = MCTSControllerParallel(mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+                                        time_step=time_step, horizon=horizon, mcts_iters=mcts_iters,
+                                        lambda_dv=lambda_dv, num_workers=num_workers,
+                                        use_torch=use_gpu, device=device)
 
     # Check if resuming from checkpoint
     if resume_from and os.path.exists(resume_from):
