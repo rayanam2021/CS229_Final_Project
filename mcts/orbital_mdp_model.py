@@ -104,22 +104,39 @@ class OrbitalMCTSModel:
             positions.append(r_vec * 1000.0)
 
         # 4. Create grids and compute rewards
-        # OPTIMIZATION: Pre-clone all grids, then compute entropies and observations
-        # This improves cache locality and allows for potential future batching
+        # OPTIMIZATION: Pre-clone all grids, then compute entropies on GPU
         grids = [state.grid.clone() for _ in range(num_actions)]
-        entropies_before = [calculate_entropy(grid.belief) for grid in grids]
 
-        # Simulate observations (could be batched in future optimization)
+        # OPTIMIZATION: Keep entropies on GPU to avoid transfers
+        if self.use_torch:
+            import torch
+            entropies_before = torch.stack([
+                calculate_entropy(grid.belief, return_tensor=True) for grid in grids
+            ])
+        else:
+            entropies_before = [calculate_entropy(grid.belief) for grid in grids]
+
+        # Simulate observations
         for grid, pos_child in zip(grids, positions):
             simulate_observation(grid, self.rso, self.camera_fn, pos_child)
+
+        # Compute entropies after observations (keep on GPU)
+        if self.use_torch:
+            entropies_after = torch.stack([
+                calculate_entropy(grid.belief, return_tensor=True) for grid in grids
+            ])
+            # Single GPU→CPU transfer for all entropy values
+            info_gains = (entropies_before - entropies_after).cpu().numpy()
+        else:
+            entropies_after = [calculate_entropy(grid.belief) for grid in grids]
+            info_gains = np.array([eb - ea for eb, ea in zip(entropies_before, entropies_after)])
 
         # Compute rewards
         next_states = []
         rewards = []
 
-        for next_roe, grid, entropy_before, action in zip(next_roes, grids, entropies_before, actions):
-            entropy_after = calculate_entropy(grid.belief)
-            info_gain = entropy_before - entropy_after
+        for i, (next_roe, grid, action) in enumerate(zip(next_roes, grids, actions)):
+            info_gain = float(info_gains[i])
             dv_cost = float(np.linalg.norm(action))
             norm_gain = info_gain / self.initial_entropy
             reward = norm_gain - self.lambda_dv * dv_cost

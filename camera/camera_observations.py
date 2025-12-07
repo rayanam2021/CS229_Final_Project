@@ -36,14 +36,25 @@ def sigmoid(L):
     else:
         return 1.0 / (1.0 + np.exp(-L))
 
-def calculate_entropy(belief):
-    """Calculate entropy, works with both numpy and torch"""
+def calculate_entropy(belief, return_tensor=False):
+    """
+    Calculate entropy, works with both numpy and torch.
+
+    Args:
+        belief: Belief grid (numpy array or torch tensor)
+        return_tensor: If True and belief is a tensor, return GPU tensor instead of float.
+                      This avoids GPU→CPU transfer for batch operations.
+
+    Returns:
+        float or torch.Tensor: Entropy value
+    """
     eps = 1e-9
     if isinstance(belief, torch.Tensor) if TORCH_AVAILABLE else False:
         belief_clipped = torch.clamp(belief, eps, 1 - eps)
         entropy = -torch.sum(belief_clipped * torch.log(belief_clipped) +
                           (1 - belief_clipped) * torch.log(1 - belief_clipped))
-        return float(entropy.item())
+        # OPTIMIZATION: Keep on GPU if requested to avoid transfer
+        return entropy if return_tensor else float(entropy.item())
     else:
         belief_clipped = np.clip(belief, eps, 1 - eps)
         entropy = -np.sum(belief_clipped * np.log(belief_clipped) +

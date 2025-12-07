@@ -106,6 +106,7 @@ If you don't have CUDA Toolkit installed or get a version mismatch error:
 **For detailed installation instructions (Windows/Linux), troubleshooting, and performance benchmarks:**
 
 📖 **See [camera/cuda/README.md](camera/cuda/README.md)**
+📖 **See [docs/Optimization_Summary.md](docs/Optimization_Summary.md)** for complete optimization details and future opportunities
 
 **Don't have GPU?** No problem! The system automatically falls back to CPU - everything still works, just slower.
 
