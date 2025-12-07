@@ -20,11 +20,13 @@ class SelfPlayTrainer:
         checkpoint_dir: Optional[str] = None,
         max_buffer_size: int = 100_000,
         gradient_clip_norm: float = 1.0,
+        use_amp: bool = False,  # Mixed precision training
     ):
         self.network = network.to(device)
         self.device = device
         self.checkpoint_dir = checkpoint_dir or "./checkpoints"
         self.gradient_clip_norm = gradient_clip_norm
+        self.use_amp = use_amp and device == 'cuda'  # Only use AMP on CUDA
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         self.optimizer = optim.Adam(
@@ -36,6 +38,9 @@ class SelfPlayTrainer:
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=100, eta_min=1e-5
         )
+
+        # Mixed precision scaler (2-3x faster on GPU)
+        self.scaler = torch.cuda.amp.GradScaler() if self.use_amp else None
 
         # Replay buffer stores: (state, belief, policy, return, action, reward, next_state, time)
         self.replay_buffer: List[Tuple] = []
@@ -115,24 +120,50 @@ class SelfPlayTrainer:
         # Unpack all data
         orbital_states, belief_grids, policies_mcts, returns, _, _, _, _ = self.prepare_batch(batch_size)
 
-        # Forward pass
-        policy_logits, values = self.network(orbital_states, belief_grids)
+        # Mixed Precision Training (2-3x faster on GPU)
+        if self.use_amp:
+            with torch.cuda.amp.autocast():
+                # Forward pass
+                policy_logits, values = self.network(orbital_states, belief_grids)
 
-        # Policy loss
-        log_probs = torch.log_softmax(policy_logits, dim=1)
-        policy_loss = -(policies_mcts * log_probs).sum(dim=1).mean()
+                # Policy loss
+                log_probs = torch.log_softmax(policy_logits, dim=1)
+                policy_loss = -(policies_mcts * log_probs).sum(dim=1).mean()
 
-        # Value loss
-        value_loss = torch.nn.functional.mse_loss(values.squeeze(), returns)
+                # Value loss
+                value_loss = torch.nn.functional.mse_loss(values.squeeze(), returns)
 
-        # Total loss
-        total_loss = policy_weight * policy_loss + value_weight * value_loss
+                # Total loss
+                total_loss = policy_weight * policy_loss + value_weight * value_loss
 
-        # Backward pass
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=self.gradient_clip_norm)
-        self.optimizer.step()
+            # Backward pass with gradient scaling
+            self.optimizer.zero_grad()
+            self.scaler.scale(total_loss).backward()
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=self.gradient_clip_norm)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+        else:
+            # Standard training (CPU or GPU without AMP)
+            # Forward pass
+            policy_logits, values = self.network(orbital_states, belief_grids)
+
+            # Policy loss
+            log_probs = torch.log_softmax(policy_logits, dim=1)
+            policy_loss = -(policies_mcts * log_probs).sum(dim=1).mean()
+
+            # Value loss
+            value_loss = torch.nn.functional.mse_loss(values.squeeze(), returns)
+
+            # Total loss
+            total_loss = policy_weight * policy_loss + value_weight * value_loss
+
+            # Backward pass
+            self.optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=self.gradient_clip_norm)
+            self.optimizer.step()
 
         return {
             "policy_loss": policy_loss.item(),

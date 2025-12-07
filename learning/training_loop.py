@@ -12,6 +12,15 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
+
+# CRITICAL FIX: Set multiprocessing start method to 'spawn' for CUDA compatibility
+# Must be done before any CUDA operations
+if __name__ != "__main__":
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass  # Already set
 
 from learning.training import SelfPlayTrainer
 from learning.policy_value_network import PolicyValueNetwork
@@ -224,14 +233,27 @@ class AlphaZeroTrainer:
 
         self.network = PolicyValueNetwork(grid_dims=self.grid_dims, num_actions=13, hidden_dim=128)
 
+        # CRITICAL FIX: Use GPU for training when available (was hardcoded to CPU!)
+        self.training_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.log(f"Training Device: {self.training_device.upper()}")
+
+        # Adjust batch size based on device (GPU can handle larger batches)
+        base_batch_size = self.config['training'].get('batch_size', 64)
+        if self.training_device == 'cuda':
+            self.batch_size = base_batch_size * 2  # 2x larger batches on GPU
+            self.log(f"GPU detected: Increasing batch size from {base_batch_size} to {self.batch_size}")
+        else:
+            self.batch_size = base_batch_size
+
         ckpt_dir = os.path.join(self.run_dir, "checkpoints")
         self.trainer = SelfPlayTrainer(
             network=self.network,
             learning_rate=self.config['training'].get('learning_rate', 0.001),
             weight_decay=1e-4,
-            device='cpu',
+            device=self.training_device,  # Use GPU when available!
             checkpoint_dir=ckpt_dir,
-            max_buffer_size=self.config['training'].get('buffer_size', 10000)
+            max_buffer_size=self.config['training'].get('buffer_size', 10000),
+            use_amp=self.training_device == 'cuda'  # Mixed precision on GPU
         )
 
     def _setup_logging(self):
@@ -469,11 +491,13 @@ class AlphaZeroTrainer:
                         import traceback
                         traceback.print_exc()
 
-            if len(self.trainer.replay_buffer) >= tr_cfg['batch_size']:
+            if len(self.trainer.replay_buffer) >= self.batch_size:
                 self.log("Training Network on updated buffer...")
+                train_start = time.time()
                 for _ in range(tr_cfg['epochs_per_cycle']):
-                    l = self.trainer.train_epoch(5, tr_cfg['batch_size'])
-                self.log(f"Loss: P={l['policy_loss']:.4f} V={l['value_loss']:.4f} T={l['total_loss']:.4f}")
+                    l = self.trainer.train_epoch(5, self.batch_size)
+                train_time = time.time() - train_start
+                self.log(f"Loss: P={l['policy_loss']:.4f} V={l['value_loss']:.4f} T={l['total_loss']:.4f} | Time: {train_time:.2f}s")
 
             self.trainer.save_checkpoint(episodes_completed + current_batch_size)
             episodes_completed += current_batch_size

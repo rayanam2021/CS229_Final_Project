@@ -25,8 +25,13 @@ import sys
 import time
 import argparse
 import glob
+import multiprocessing
 from datetime import datetime
 from pathlib import Path
+
+# CRITICAL: Set multiprocessing to 'spawn' mode for CUDA compatibility
+if multiprocessing.get_start_method(allow_none=True) != 'spawn':
+    multiprocessing.set_start_method('spawn', force=True)
 
 # Import local modules
 from learning.training import SelfPlayTrainer
