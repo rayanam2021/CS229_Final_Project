@@ -91,6 +91,38 @@ class VoxelGrid:
             self.L_hit = logit(np.array(P_HIT_OCC)) - logit(np.array(P_HIT_EMP))
             self.L_miss = logit(np.array(1-P_HIT_OCC)) - logit(np.array(1-P_HIT_EMP))
 
+    def clone(self):
+        """
+        Efficient cloning of VoxelGrid - reuses metadata, only clones tensors.
+
+        OPTIMIZATION: Avoids creating new VoxelGrid object with __init__ overhead.
+        For GPU grids, uses .clone() for proper copy-on-write semantics.
+        """
+        new_grid = object.__new__(VoxelGrid)  # Bypass __init__
+
+        # Copy metadata (cheap)
+        new_grid.dims = self.dims
+        new_grid.voxel_size = self.voxel_size
+        new_grid.origin = self.origin
+        new_grid.max_bound = self.max_bound
+        new_grid.use_torch = self.use_torch
+        new_grid.device = self.device
+
+        # Clone tensors/arrays (the actual data)
+        if self.use_torch:
+            new_grid.belief = self.belief.clone()
+            new_grid.log_odds = self.log_odds.clone()
+            # Reuse constants (no need to clone scalars)
+            new_grid.L_hit = self.L_hit
+            new_grid.L_miss = self.L_miss
+        else:
+            new_grid.belief = self.belief.copy()
+            new_grid.log_odds = self.log_odds.copy()
+            new_grid.L_hit = self.L_hit
+            new_grid.L_miss = self.L_miss
+
+        return new_grid
+
     def get_entropy(self) -> float:
         return calculate_entropy(self.belief)
 

@@ -104,27 +104,21 @@ class OrbitalMCTSModel:
             positions.append(r_vec * 1000.0)
 
         # 4. Create grids and compute rewards
-        # Note: Can't easily vectorize observation simulation (each needs separate grid state)
+        # OPTIMIZATION: Pre-clone all grids, then compute entropies and observations
+        # This improves cache locality and allows for potential future batching
+        grids = [state.grid.clone() for _ in range(num_actions)]
+        entropies_before = [calculate_entropy(grid.belief) for grid in grids]
+
+        # Simulate observations (could be batched in future optimization)
+        for grid, pos_child in zip(grids, positions):
+            simulate_observation(grid, self.rso, self.camera_fn, pos_child)
+
+        # Compute rewards
         next_states = []
         rewards = []
 
-        for i, (next_roe, pos_child, action) in enumerate(zip(next_roes, positions, actions)):
-            # Clone grid (already optimized with .clone())
-            grid = VoxelGrid(self.grid_dims, use_torch=self.use_torch, device=self.device)
-
-            if self.use_torch:
-                import torch
-                grid.belief = state.grid.belief.clone()
-                grid.log_odds = state.grid.log_odds.clone()
-            else:
-                grid.belief[:] = state.grid.belief[:]
-                grid.log_odds[:] = state.grid.log_odds[:]
-
-            # Simulate observation
-            entropy_before = calculate_entropy(grid.belief)
-            simulate_observation(grid, self.rso, self.camera_fn, pos_child)
+        for next_roe, grid, entropy_before, action in zip(next_roes, grids, entropies_before, actions):
             entropy_after = calculate_entropy(grid.belief)
-
             info_gain = entropy_before - entropy_after
             dv_cost = float(np.linalg.norm(action))
             norm_gain = info_gain / self.initial_entropy
@@ -155,20 +149,9 @@ class OrbitalMCTSModel:
         r_vec, _ = map_roe_to_rtn(next_roe, self.a_chief, self.n_chief, f=f_target, omega=self.omega_chief)
         pos_child = r_vec * 1000.0
 
-        # 4. Update Belief Grid (GPU-ENABLED with copy-on-write optimization)
-        # OPTIMIZATION: Clone grid with .clone() for PyTorch tensors
-        # This is faster than creating new VoxelGrid and copying arrays
-        grid = VoxelGrid(self.grid_dims, use_torch=self.use_torch, device=self.device)
-
-        if self.use_torch:
-            import torch
-            # Use .clone() for proper copy-on-write semantics
-            grid.belief = state.grid.belief.clone()
-            grid.log_odds = state.grid.log_odds.clone()
-        else:
-            # NumPy still needs explicit copy
-            grid.belief[:] = state.grid.belief[:]
-            grid.log_odds[:] = state.grid.log_odds[:]
+        # 4. Update Belief Grid (GPU-ENABLED with efficient cloning)
+        # OPTIMIZATION: Use efficient clone() method to avoid __init__ overhead
+        grid = state.grid.clone()
 
         entropy_before = calculate_entropy(grid.belief)
         simulate_observation(grid, self.rso, self.camera_fn, pos_child)
