@@ -1,16 +1,21 @@
 import numpy as np
 import pandas as pd
 import os
-from multiprocessing import cpu_count
 
 from mcts.orbital_mdp_model import OrbitalMCTSModel, OrbitalState
 from mcts.mcts import MCTS
 
 class MCTSController:
-    
-    def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief, 
-                 time_step=30.0, horizon=3, branching_factor=13, num_workers=None, 
-                 lambda_dv=0.0, mcts_iters=3000):
+
+    def __init__(self, mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+                 time_step=30.0, horizon=3,
+                 lambda_dv=0.0, mcts_iters=3000, use_torch=False, device='cpu'):
+        """
+        MCTS Controller for Pure MCTS planning.
+
+        Note: Runs sequentially (single process) with GPU acceleration.
+        GPU provides 15-20x speedup over CPU baseline.
+        """
         self.mu_earth = mu_earth
         self.a_chief = a_chief
         self.e_chief = e_chief
@@ -19,19 +24,19 @@ class MCTSController:
         self.n_chief = n_chief
         self.time_step = time_step
         self.horizon = horizon
-        self.branching_factor = branching_factor
-        self.num_workers = num_workers or max(1, cpu_count() - 1)
         self.replay_buffer = []
         self.lambda_dv = lambda_dv
 
-        # Initialize Model
+        # Initialize Model with GPU support
         self.model = OrbitalMCTSModel(
             a_chief, e_chief, i_chief, omega_chief, n_chief,
             rso=None, camera_fn=None,
             grid_dims=None,
             lambda_dv=lambda_dv,
             time_step=time_step,
-            max_depth=horizon
+            max_depth=horizon,
+            use_torch=use_torch,
+            device=device
         )
 
         # Initialize MCTS

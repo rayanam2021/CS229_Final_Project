@@ -16,6 +16,72 @@ from roe.propagation import propagateGeomROE, rtn_to_roe
 from roe.dynamics import apply_impulsive_dv
 import imageio
 import csv
+import pickle
+import torch
+
+def save_checkpoint(out_folder, step, state, time_sim, grid, entropy_history, camera_positions, view_directions, burn_indices, controller):
+    """Save a checkpoint of the current simulation state."""
+    checkpoint_path = os.path.join(out_folder, f"checkpoint_step_{step}.pkl")
+
+    # Convert grid belief to CPU for pickling
+    if grid.use_torch:
+        grid_belief_cpu = grid.belief.cpu().numpy()
+        grid_log_odds_cpu = grid.log_odds.cpu().numpy()
+    else:
+        grid_belief_cpu = grid.belief
+        grid_log_odds_cpu = grid.log_odds
+
+    checkpoint = {
+        'step': step,
+        'state_roe': state,
+        'time_sim': time_sim,
+        'grid_belief': grid_belief_cpu,
+        'grid_log_odds': grid_log_odds_cpu,
+        'grid_dims': grid.dims,
+        'grid_voxel_size': grid.voxel_size,
+        'grid_origin': grid.origin,
+        'entropy_history': entropy_history,
+        'camera_positions': camera_positions,
+        'view_directions': view_directions,
+        'burn_indices': burn_indices,
+        'replay_buffer': controller.replay_buffer,
+    }
+
+    with open(checkpoint_path, 'wb') as f:
+        pickle.dump(checkpoint, f)
+
+    print(f"💾 Checkpoint saved: {checkpoint_path}")
+    return checkpoint_path
+
+def load_checkpoint(checkpoint_path, use_gpu=False, device='cpu'):
+    """Load a checkpoint and restore simulation state."""
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    print(f"📂 Loading checkpoint: {checkpoint_path}")
+
+    with open(checkpoint_path, 'rb') as f:
+        checkpoint = pickle.load(f)
+
+    # Restore grid
+    grid = VoxelGrid(
+        grid_dims=checkpoint['grid_dims'],
+        voxel_size=checkpoint['grid_voxel_size'],
+        origin=tuple(checkpoint['grid_origin']),
+        use_torch=use_gpu,
+        device=device
+    )
+
+    if use_gpu:
+        grid.belief = torch.tensor(checkpoint['grid_belief'], dtype=torch.float32, device=device)
+        grid.log_odds = torch.tensor(checkpoint['grid_log_odds'], dtype=torch.float32, device=device)
+    else:
+        grid.belief = checkpoint['grid_belief']
+        grid.log_odds = checkpoint['grid_log_odds']
+
+    print(f"✅ Loaded checkpoint from step {checkpoint['step']}")
+
+    return checkpoint, grid
 
 def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera_positions, view_directions, burn_indices):
     print("\n🎬 Generating visualization frames...")
@@ -53,7 +119,14 @@ def create_visualization_frames(out_folder, grid_initial, rso, camera_fn, camera
     plt.close(fig)
     return frames
 
-def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, control_params, initial_state_roe, out_folder):
+def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, control_params, initial_state_roe, out_folder, resume_from=None, checkpoint_interval=10):
+    """
+    Run Pure MCTS simulation with checkpointing support.
+
+    Args:
+        resume_from: Path to checkpoint file to resume from (default: None for new run)
+        checkpoint_interval: Save checkpoint every N steps (default: 10)
+    """
     horizon = sim_config.get('max_horizon', 5)
     num_steps = sim_config.get('num_steps', 20)
     time_step = sim_config.get('time_step', 30.0)
@@ -71,39 +144,67 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
     omega_chief = np.deg2rad(orbit_params['omega_chief_deg'])
     n_chief = np.sqrt(mu_earth / (a_chief ** 3))
 
-    grid = VoxelGrid(grid_dims=(20, 20, 20))
+    # Enable GPU acceleration if available
+    import torch
+    use_gpu = torch.cuda.is_available()
+    device = 'cuda' if use_gpu else 'cpu'
+
+    grid = VoxelGrid(grid_dims=(20, 20, 20), use_torch=use_gpu, device=device)
     rso = GroundTruthRSO(grid)
     lambda_dv = control_params.get('lambda_dv', 0.0)
-    
-    controller = MCTSController(mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief, 
-                                time_step=time_step, horizon=horizon, branching_factor=13, num_workers=None,
-                                lambda_dv=lambda_dv)
 
-    state = initial_state_roe
-    time_sim = 0.0
-    
-    initial_entropy = grid.get_entropy()
-    entropy_history = [initial_entropy]
-    
-    rho_start, _ = propagateGeomROE(state, a_chief, e_chief, i_chief, omega_chief, n_chief, np.array([time_sim]), t0=time_sim)
-    pos_start = rho_start[:, 0] * 1000 
-    camera_positions = [pos_start]
-    view_directions = [-pos_start / np.linalg.norm(pos_start)]
-    burn_indices = [] 
+    if use_gpu:
+        print(f"✅ GPU acceleration ENABLED (device: {device})")
+    else:
+        print("⚠️  GPU not available, using CPU")
+
+    controller = MCTSController(mu_earth, a_chief, e_chief, i_chief, omega_chief, n_chief,
+                                time_step=time_step, horizon=horizon,
+                                lambda_dv=lambda_dv, use_torch=use_gpu, device=device)
+
+    # Check if resuming from checkpoint
+    if resume_from and os.path.exists(resume_from):
+        checkpoint, grid = load_checkpoint(resume_from, use_gpu=use_gpu, device=device)
+        state = checkpoint['state_roe']
+        time_sim = checkpoint['time_sim']
+        entropy_history = checkpoint['entropy_history']
+        camera_positions = checkpoint['camera_positions']
+        view_directions = checkpoint['view_directions']
+        burn_indices = checkpoint['burn_indices']
+        controller.replay_buffer = checkpoint['replay_buffer']
+        start_step = checkpoint['step']  # Resume from the next step after checkpoint
+        rso = GroundTruthRSO(grid)
+        print(f"🔄 Resuming from step {start_step}/{num_steps} (completed {checkpoint['step']-1} steps)")
+    else:
+        # Fresh start
+        state = initial_state_roe
+        time_sim = 0.0
+
+        initial_entropy = grid.get_entropy()
+        entropy_history = [initial_entropy]
+
+        rho_start, _ = propagateGeomROE(state, a_chief, e_chief, i_chief, omega_chief, n_chief, np.array([time_sim]), t0=time_sim)
+        pos_start = rho_start[:, 0] * 1000
+        camera_positions = [pos_start]
+        view_directions = [-pos_start / np.linalg.norm(pos_start)]
+        burn_indices = []
+        start_step = 0
 
     print(f"Using torch and cuda")
     roe_str = np.array2string(state, formatter={'float_kind':lambda x: "%.1e" % x})
     print(f"Initial State (ROEs): {roe_str}")
-    
+
     start_time = time.time()
 
-    for step in range(num_steps):
+    for step in range(start_step, num_steps):
+        step_start_time = time.time()
+
         print(f"\n{'='*70}")
         print(f"Step {step+1}/{num_steps} (Time: {time_sim:.1f}s)")
         print(f"{'='*70}")
 
         action, predicted_value, stats = controller.select_action(state, time_sim, np.array([time_step]), grid, rso, camera_params, verbose=verbose, out_folder=out_folder)
-        
+
         action_str = np.array2string(action, formatter={'float_kind':lambda x: "%.2f" % x})
         print(f"Best Action: {action_str} m/s")
 
@@ -111,41 +212,69 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
             burn_indices.append(len(camera_positions) - 1)
 
         t_burn = np.array([time_sim])
-        next_state_impulse = apply_impulsive_dv(state, action, a_chief, n_chief, t_burn, e=e_chief, i=i_chief, omega=omega_chief)        
-        
+        next_state_impulse = apply_impulsive_dv(state, action, a_chief, n_chief, t_burn, e=e_chief, i=i_chief, omega=omega_chief)
+
         t_next = time_sim + time_step
         rho_rtn_next, rhodot_rtn_next = propagateGeomROE(next_state_impulse, a_chief, e_chief, i_chief, omega_chief, n_chief, np.array([t_next]), t0=time_sim)
-        
+
         next_state_propagated = np.array(rtn_to_roe(rho_rtn_next[:, 0], rhodot_rtn_next[:, 0], a_chief, n_chief, np.array([t_next])))
 
-        pos_next = rho_rtn_next[:, 0] * 1000 
+        pos_next = rho_rtn_next[:, 0] * 1000
         camera_positions.append(pos_next)
         view_directions.append(-pos_next / np.linalg.norm(pos_next))
-        
+
         entropy_before = grid.get_entropy()
-        simulate_observation(grid, rso, camera_params, pos_next) 
+        simulate_observation(grid, rso, camera_params, pos_next)
         entropy_after = grid.get_entropy()
         entropy_history.append(entropy_after)
-        
+
         entropy_reduction = entropy_before - entropy_after
         dv_cost = np.linalg.norm(action)
         actual_reward = entropy_reduction - controller.lambda_dv * dv_cost
-        
+
         print(f"   Entropy: {entropy_before:.4f} → {entropy_after:.4f}")
         print(f"   Entropy reduction: {entropy_reduction:.6f}")
         print(f"   ΔV cost: {dv_cost:.6f}")
         print(f"   Reward: {actual_reward:.6f}")
-        
+
         controller.record_transition(time_sim, state, action, actual_reward, next_state_propagated,
                                      entropy_before=entropy_before, entropy_after=entropy_after,
-                                     info_gain=entropy_reduction, dv_cost=dv_cost, 
+                                     info_gain=entropy_reduction, dv_cost=dv_cost,
                                      step_idx=step, root_stats=stats, predicted_value=predicted_value)
 
-        state = next_state_propagated 
+        state = next_state_propagated
         time_sim += time_step
 
+        # Save checkpoint at regular intervals
+        if checkpoint_interval > 0 and (step + 1) % checkpoint_interval == 0:
+            save_checkpoint(out_folder, step + 1, state, time_sim, grid, entropy_history,
+                          camera_positions, view_directions, burn_indices, controller)
+
+        step_end_time = time.time()
+        step_duration = step_end_time - step_start_time
+        print(f"⏱  Step processing time: {step_duration:.2f}s")
+
+    # Save final checkpoint after loop completes (if not already saved)
+    if checkpoint_interval > 0 and num_steps % checkpoint_interval != 0:
+        final_step = num_steps
+        save_checkpoint(out_folder, final_step, state, time_sim, grid, entropy_history,
+                      camera_positions, view_directions, burn_indices, controller)
+
     end_time = time.time()
-    print(f"⏱ Episode runtime: {end_time - start_time:.2f} seconds")
+    total_runtime = end_time - start_time
+    steps_completed = num_steps - start_step
+    avg_time_per_step = total_runtime / steps_completed if steps_completed > 0 else 0
+
+    print(f"\n{'='*70}")
+    print(f"MCTS SIMULATION COMPLETE")
+    print(f"{'='*70}")
+    print(f"⏱  Total runtime: {total_runtime:.2f}s ({total_runtime/60:.1f} minutes)")
+    print(f"📊 Steps completed: {steps_completed}")
+    print(f"⚡ Average time per step: {avg_time_per_step:.2f}s")
+    if avg_time_per_step > 0:
+        print(f"🚀 Throughput: {1/avg_time_per_step:.2f} steps/second")
+    print(f"{'='*70}\n")
+
     controller.save_replay_buffer(base_dir=out_folder)
 
     if visualize and len(camera_positions) > 0:

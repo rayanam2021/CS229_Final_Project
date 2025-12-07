@@ -48,17 +48,19 @@ def calculate_entropy(belief, return_tensor=False):
     Returns:
         float or torch.Tensor: Entropy value
     """
-    eps = 1e-9
+    eps = 1e-6  # Use 1e-6 for float32 precision (1e-9 rounds to 1.0 in float32)
     if isinstance(belief, torch.Tensor) if TORCH_AVAILABLE else False:
-        belief_clipped = torch.clamp(belief, eps, 1 - eps)
-        entropy = -torch.sum(belief_clipped * torch.log(belief_clipped) +
-                          (1 - belief_clipped) * torch.log(1 - belief_clipped))
+        # Clamp BEFORE computing entropy to prevent log(0)
+        belief_clamped = torch.clamp(belief, eps, 1.0 - eps)
+        entropy = -torch.sum(belief_clamped * torch.log(belief_clamped) +
+                          (1.0 - belief_clamped) * torch.log(1.0 - belief_clamped))
         # OPTIMIZATION: Keep on GPU if requested to avoid transfer
         return entropy if return_tensor else float(entropy.item())
     else:
-        belief_clipped = np.clip(belief, eps, 1 - eps)
-        entropy = -np.sum(belief_clipped * np.log(belief_clipped) +
-                          (1 - belief_clipped) * np.log(1 - belief_clipped))
+        # Clamp BEFORE computing entropy to prevent log(0)
+        belief_clamped = np.clip(belief, eps, 1.0 - eps)
+        entropy = -np.sum(belief_clamped * np.log(belief_clamped) +
+                          (1.0 - belief_clamped) * np.log(1.0 - belief_clamped))
         return float(entropy)
 
 class VoxelGrid:
@@ -226,7 +228,12 @@ class VoxelGrid:
 
             self.log_odds[hit_mask] += self.L_hit
             self.log_odds[miss_mask] += self.L_miss
+            # Clamp log_odds to prevent numerical overflow in sigmoid
+            self.log_odds = torch.clamp(self.log_odds, -50.0, 50.0)
             self.belief = sigmoid(self.log_odds)
+            # Clamp belief to prevent log(0) in entropy calculation (use 1e-6 for float32 precision)
+            eps = 1e-6
+            self.belief = torch.clamp(self.belief, eps, 1.0 - eps)
         else:
             # CPU path (original implementation)
             hit_mask = np.zeros(self.dims, dtype=bool)
@@ -240,10 +247,15 @@ class VoxelGrid:
                 valid = [idx for idx in missed_voxels if self.is_in_bounds(np.array(idx))]
                 if valid:
                     miss_mask[tuple(np.array(valid).T)] = True
-            
+
             self.log_odds[hit_mask] += self.L_hit
             self.log_odds[miss_mask] += self.L_miss
+            # Clamp log_odds to prevent numerical overflow in sigmoid
+            self.log_odds = np.clip(self.log_odds, -50.0, 50.0)
             self.belief = sigmoid(self.log_odds)
+            # Clamp belief to prevent log(0) in entropy calculation (use 1e-6 for float32 precision)
+            eps = 1e-6
+            self.belief = np.clip(self.belief, eps, 1.0 - eps)
 
 class GroundTruthRSO:
     def __init__(self, grid: VoxelGrid):

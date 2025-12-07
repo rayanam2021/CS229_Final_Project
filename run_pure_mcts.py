@@ -65,5 +65,6 @@ if __name__ == "__main__":
         camera_params=cam_conf,
         control_params=ctrl_conf,
         initial_state_roe=initial_roe_dimless,
-        out_folder=out_folder
+        out_folder=out_folder,
+        checkpoint_interval=10  # Save checkpoint every 10 steps
     )
