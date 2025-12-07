@@ -44,25 +44,20 @@ class MCTSController:
         )
 
     def select_action(self, state, time, tspan, grid, rso, camera_fn, step=0, verbose=False, out_folder=None):
-        # Update the model with current environment objects for this step
         self.model.rso = rso
         self.model.camera_fn = camera_fn
         self.model.grid_dims = grid.dims
 
-        # Wrap ROEs + belief into an OrbitalState for MCTS
         root_state = OrbitalState(roe=state.copy(), grid=grid, time=time)
 
-        # --- FIX: Robustly Handle Return Values ---
         result = self.mcts.get_best_root_action(root_state, step, out_folder)
         
         if len(result) == 3:
             best_action, value, root_data = result
             
-            # Check if root_data is already a dictionary (stats) or a Node object
             if isinstance(root_data, dict):
                 stats = root_data
             elif hasattr(root_data, 'N'):
-                # It's a Node object, extract stats
                 stats = {
                     'root_N': root_data.N,
                     'root_Q_sa': root_data.Q_sa,
@@ -73,7 +68,6 @@ class MCTSController:
                 # Unknown format
                 stats = {}
         else:
-            # Fallback if MCTS only returns 2 values
             best_action, value = result
             stats = {'root_N': 0, 'root_Q_sa': [], 'root_N_sa': []}
 

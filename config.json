@@ -36,7 +36,7 @@
         "diy": 0.0
     },
     "monte_carlo": {
-        "num_episodes": 1,
+        "num_episodes": 65,
         "perturbation_bounds": {
             "da": 0.0,
             "dl": 20.0,
