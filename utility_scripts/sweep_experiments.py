@@ -15,8 +15,8 @@ if __name__ == "__main__":
 
     for iter in iterations:
         for seed in seeds:
-            # out_dir = f"output/experiments/c_sweep/c_{c}_seed_{seed}"
-            out_dir = f"output/experiments/iteration_sweep/i_{iter}_seed_{seed}"
+            # out_dir = f"outputs/mcts/experiments/c_sweep/c_{c}_seed_{seed}"
+            out_dir = f"outputs/mcts/experiments/iteration_sweep/i_{iter}_seed_{seed}"
             os.makedirs(out_dir, exist_ok=True)
 
             config = {

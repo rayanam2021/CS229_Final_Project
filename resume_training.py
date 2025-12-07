@@ -10,10 +10,10 @@ Usage:
 
 Examples:
     # Resume and complete the original training plan (if interrupted)
-    python resume_training.py --run_dir output_training/run_2025-12-04_11-08-29
+    python resume_training.py --run_dir outputs/training/run_2025-12-04_11-08-29
 
     # Continue training for 65 MORE episodes (beyond what was originally planned)
-    python resume_training.py --run_dir output_training/run_2025-12-04_11-08-29 --additional_episodes 65
+    python resume_training.py --run_dir outputs/training/run_2025-12-04_11-08-29 --additional_episodes 65
 """
 
 import numpy as np

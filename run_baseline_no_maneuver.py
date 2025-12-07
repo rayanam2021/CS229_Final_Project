@@ -180,7 +180,7 @@ def run_baseline():
         state = next_state
 
     # 6. Save All Artifacts
-    output_dir = "output_baseline"
+    output_dir = "outputs/baseline"
     os.makedirs(output_dir, exist_ok=True)
     
     # A. Save CSV

@@ -47,7 +47,7 @@ python main.py
 This runs a single episode using pure MCTS planning:
 - Uses UCB1-based tree search with random rollouts
 - No neural networks involved
-- Results saved to `output/<timestamp>/`
+- Results saved to `outputs/training/<timestamp>/`
 - Generates visualization video and entropy plots
 
 **What to expect:**
@@ -64,7 +64,7 @@ This trains a neural network via self-play:
 - Runs multiple episodes in parallel
 - Each episode uses MCTS guided by neural network predictions
 - Network learns from collected trajectories
-- Results saved to `output_training/run_<timestamp>/`
+- Results saved to `outputs/training/run_<timestamp>/`
 
 **What to expect:**
 - Runtime: Hours to days depending on `num_episodes` in config
@@ -73,12 +73,12 @@ This trains a neural network via self-play:
 ### 3. Resume Interrupted Training
 
 ```bash
-python resume_training.py --run_dir output_training/run_2025-12-04_11-08-29
+python resume_training.py --run_dir outputs/training/run_2025-12-04_11-08-29
 ```
 
 Optional: specify additional episodes
 ```bash
-python resume_training.py --run_dir output_training/run_2025-12-04_11-08-29 --additional_episodes 20
+python resume_training.py --run_dir outputs/training/run_2025-12-04_11-08-29 --additional_episodes 20
 ```
 
 ### 4. Run Baseline (No Maneuvers)
@@ -103,7 +103,7 @@ All parameters are controlled via `config.json`:
   "time_step": 120.0,            // Orbital propagation timestep (seconds)
   "verbose": false,
   "visualize": true,
-  "output_dir": "output_training"
+  "output_dir": "outputs/training"
 }
 ```
 
@@ -240,18 +240,18 @@ python run_alphazero.py
 
 ## Output Structure
 
-### Pure MCTS Output (`output/<timestamp>/`)
+### Pure MCTS Output (`outputs/training/<timestamp>/`)
 ```
-output/2025-12-05_10-30-00/
+outputs/training/2025-12-05_10-30-00/
 ├── final_visualization.mp4      # Animation of spacecraft trajectory + belief
 ├── final_frame.png              # Last frame
 ├── entropy_progression.png      # Entropy reduction over time
 └── replay_buffer.csv            # State-action-reward data
 ```
 
-### AlphaZero Output (`output_training/run_<timestamp>/`)
+### AlphaZero Output (`outputs/training/run_<timestamp>/`)
 ```
-output_training/run_2025-12-05_10-30-00/
+outputs/training/run_2025-12-05_10-30-00/
 ├── run_config.json              # Configuration used
 ├── training.log                 # Training progress log
 ├── loss_history.png             # Policy and value loss curves
@@ -301,8 +301,29 @@ CS229_Final_Project/
 ├── camera/
 │   └── camera_observations.py   # Camera model + voxel grid
 │
-└── output/                      # Results directories
-    ├── output/                  # Pure MCTS results
-    ├── output_training/         # AlphaZero results
-    └── output_baseline/         # Baseline results
+├── utility_scripts/             # Utility scripts
+│   ├── plot_losses.py           # Plot training losses
+│   ├── plot_losses_separate.py  # Separate loss plots
+│   ├── inspect_checkpoint.py    # Checkpoint inspection
+│   ├── test_trained_agent.py    # Test trained models
+│   ├── test_propagation_maneuver.py
+│   └── generate_network_diagram.py
+│
+├── docs/                        # Documentation
+│   ├── CS_229_Project_Active_Information_Final_Report_Full_Length.pdf
+│   └── Project approach with AlphaZero.md
+│
+├── media/                       # Images and animations
+│   ├── network_architecture.png
+│   └── rso_characterization_circle.gif
+│
+├── tests/                       # Test and experiment scripts
+│   ├── analyze_output_files.py
+│   ├── sweep_experiments.py
+│   └── ...
+│
+└── outputs/                     # All output results
+    ├── mcts/                    # Pure MCTS results
+    ├── training/                # AlphaZero training runs
+    └── baseline/                # Baseline comparison results
 ```

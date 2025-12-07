@@ -5,7 +5,7 @@
         "time_step": 120.0,
         "verbose": false,
         "visualize": true,
-        "output_dir": "output_training"
+        "output_dir": "outputs/training"
     },
     "orbit": {
         "mu_earth": 398600.4418,
