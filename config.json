@@ -55,5 +55,8 @@
         "buffer_size": 20000,
         "c_puct": 1.4,
         "gamma": 0.99
+    },
+    "gpu": {
+        "enable_ray_tracing": true
     }
 }

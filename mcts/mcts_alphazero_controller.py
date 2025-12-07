@@ -22,14 +22,15 @@ class Node:
 class MCTSAlphaZeroCPU:
     """
     Serial CPU implementation of AlphaZero MCTS.
+    Supports both CPU and CUDA devices.
     """
-    def __init__(self, model, network, c_puct=1.4, n_iters=100, gamma=0.99):
+    def __init__(self, model, network, c_puct=1.4, n_iters=100, gamma=0.99, device="cpu"):
         self.model = model
         self.network = network
         self.c_puct = c_puct
         self.n_iters = n_iters
         self.gamma = gamma
-        self.device = "cpu"
+        self.device = device
 
     def search(self, root_state):
         # Initialize root node
@@ -86,15 +87,24 @@ class MCTSAlphaZeroCPU:
         return best_action, best_child
 
     def _expand_node(self, node):
-        roe_tensor = torch.tensor(node.state.roe, dtype=torch.float32).unsqueeze(0)
-        grid_tensor = torch.tensor(node.state.grid.belief, dtype=torch.float32).unsqueeze(0)
-        
+        # Handle ROE (always numpy array)
+        roe_tensor = torch.tensor(node.state.roe, dtype=torch.float32, device=self.device).unsqueeze(0)
+
+        # Handle grid belief (might be numpy array or torch tensor)
+        if isinstance(node.state.grid.belief, torch.Tensor):
+            # Already a tensor - just ensure correct device and add batch dimension
+            grid_tensor = node.state.grid.belief.to(self.device).unsqueeze(0)
+        else:
+            # Numpy array - convert to tensor on correct device
+            grid_tensor = torch.tensor(node.state.grid.belief, dtype=torch.float32, device=self.device).unsqueeze(0)
+
         self.network.eval()
         with torch.no_grad():
             policy_logits, value = self.network(roe_tensor, grid_tensor)
-        
-        policy_probs = torch.softmax(policy_logits, dim=1).squeeze().numpy()
-        value_scalar = value.item()
+
+        # Move tensors to CPU before converting to numpy (required for CUDA tensors)
+        policy_probs = torch.softmax(policy_logits, dim=1).squeeze().cpu().numpy()
+        value_scalar = value.cpu().item()
 
         actions = self.model.get_all_actions() 
         
