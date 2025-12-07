@@ -102,7 +102,7 @@ def run_simulation(config, checkpoint_path, output_dir):
         model=mdp, 
         network=network, 
         c_puct=1.4, 
-        n_iters=50,  
+        n_iters=100,  
         gamma=0.99
     )
 
@@ -247,8 +247,8 @@ def run_simulation(config, checkpoint_path, output_dir):
 
 if __name__ == "__main__":
     # --- CONFIGURATION ---
-    RUN_FOLDER = "output_training/run_2025-12-02_23-37-56" 
-    CHECKPOINT_FILE = "checkpoint_ep_4.pt" 
+    RUN_FOLDER = "output_training/run_2025-12-04_11-08-29v2" 
+    CHECKPOINT_FILE = "checkpoint_ep_130.pt" 
     # ---------------------
 
     cfg = load_config()
