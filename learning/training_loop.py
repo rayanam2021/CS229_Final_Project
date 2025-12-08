@@ -507,21 +507,12 @@ class AlphaZeroTrainer:
             successful_episodes = 0
             oom_errors = 0
 
-            # Dynamic work queue: workers pull episodes as they become available
-            # This prevents idle workers when some episodes finish faster than others
-            futures = []
-            episodes_submitted = 0
-            episodes_to_submit = current_batch_size
-
+            # Static batch submission: submit all episodes at once
             with ProcessPoolExecutor(max_workers=current_workers) as executor:
-                # Initially submit as many episodes as we have workers (or fewer if batch is small)
-                initial_submit = min(current_workers, episodes_to_submit)
-                for i in range(initial_submit):
-                    global_idx = episodes_completed + i
-                    futures.append(
-                        executor.submit(run_episode_worker, global_idx, cfg, current_weights, self.run_dir)
-                    )
-                    episodes_submitted += 1
+                futures = [
+                    executor.submit(run_episode_worker, episodes_completed + i, cfg, current_weights, self.run_dir)
+                    for i in range(current_batch_size)
+                ]
 
                 for future in as_completed(futures):
                     try:
@@ -600,15 +591,6 @@ class AlphaZeroTrainer:
                             )
 
                         successful_episodes += 1
-
-                        # Dynamic work queue: submit next episode if available
-                        if episodes_submitted < episodes_to_submit:
-                            next_idx = episodes_completed + episodes_submitted
-                            futures.append(
-                                executor.submit(run_episode_worker, next_idx, cfg, current_weights, self.run_dir)
-                            )
-                            episodes_submitted += 1
-                            self.log(f"Worker freed - submitting episode {next_idx+1}")
 
                     except Exception as e:
                         # Check if it's an OOM error

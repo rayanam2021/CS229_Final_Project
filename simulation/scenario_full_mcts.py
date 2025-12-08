@@ -3,7 +3,7 @@ Orbital Camera Simulation with Full MCTS Tree Search.
 """
 
 import matplotlib
-matplotlib.use('Agg') 
+matplotlib.use('Agg')
 
 import numpy as np
 from camera.camera_observations import VoxelGrid, GroundTruthRSO, simulate_observation, plot_scenario, update_plot
@@ -18,6 +18,7 @@ import imageio
 import csv
 import pickle
 import torch
+import psutil
 
 def save_checkpoint(out_folder, step, state, time_sim, grid, entropy_history, camera_positions, view_directions, burn_indices, controller):
     """Save a checkpoint of the current simulation state."""
@@ -203,9 +204,12 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
     print(f"Initial State (ROEs): {roe_str}")
 
     start_time = time.time()
+    step_metrics = []  # Track per-step performance metrics
 
     for step in range(start_step, num_steps):
         step_start_time = time.time()
+        process = psutil.Process()
+        cpu_mem_before = process.memory_info().rss / 1024 / 1024  # MB
 
         print(f"\n{'='*70}")
         print(f"Step {step+1}/{num_steps} (Time: {time_sim:.1f}s)")
@@ -260,6 +264,37 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
 
         step_end_time = time.time()
         step_duration = step_end_time - step_start_time
+
+        # Track memory usage
+        cpu_mem_after = process.memory_info().rss / 1024 / 1024  # MB
+        cpu_mem_peak = process.memory_info().rss / 1024 / 1024  # MB
+
+        gpu_mem_peak = None
+        if use_gpu:
+            try:
+                gpu_mem_peak = torch.cuda.max_memory_allocated(device) / 1024 / 1024  # MB
+            except:
+                pass
+
+        # Save step metrics
+        step_metric = {
+            'step': step + 1,
+            'duration_seconds': step_duration,
+            'duration_minutes': step_duration / 60,
+            'cpu_memory_mb': cpu_mem_after,
+            'cpu_memory_peak_mb': cpu_mem_peak,
+            'gpu_memory_peak_mb': gpu_mem_peak if gpu_mem_peak else 'N/A',
+            'entropy_before': float(entropy_before),
+            'entropy_after': float(entropy_after),
+            'entropy_reduction': float(entropy_reduction),
+            'dv_cost': float(dv_cost),
+            'reward': float(actual_reward),
+            'mcts_iterations': mcts_iters,
+            'num_workers': controller.mcts.num_workers if hasattr(controller.mcts, 'num_workers') else 'N/A',
+            'parallel_time': stats.get('parallel_time', 'N/A') if stats else 'N/A'
+        }
+        step_metrics.append(step_metric)
+
         print(f"⏱  Step processing time: {step_duration:.2f}s")
 
     # Save final checkpoint after loop completes (if not already saved)
@@ -284,6 +319,34 @@ def run_orbital_camera_sim_full_mcts(sim_config, orbit_params, camera_params, co
     print(f"{'='*70}\n")
 
     controller.save_replay_buffer(base_dir=out_folder)
+
+    # Save step-by-step metrics
+    if step_metrics:
+        metrics_path = os.path.join(out_folder, "step_metrics.json")
+        with open(metrics_path, 'w') as f:
+            json.dump(step_metrics, f, indent=4)
+        print(f"💾 Saved step metrics: {metrics_path}")
+
+    # Save overall summary
+    summary = {
+        'total_runtime_seconds': total_runtime,
+        'total_runtime_minutes': total_runtime / 60,
+        'steps_completed': steps_completed,
+        'avg_time_per_step': avg_time_per_step,
+        'throughput_steps_per_second': 1 / avg_time_per_step if avg_time_per_step > 0 else 0,
+        'mcts_iterations_per_step': mcts_iters,
+        'num_workers': controller.mcts.num_workers if hasattr(controller.mcts, 'num_workers') else 'N/A',
+        'gpu_enabled': use_gpu,
+        'device': str(device),
+        'initial_entropy': float(entropy_history[0]) if entropy_history else 'N/A',
+        'final_entropy': float(entropy_history[-1]) if entropy_history else 'N/A',
+        'total_entropy_reduction': float(entropy_history[0] - entropy_history[-1]) if len(entropy_history) > 1 else 0
+    }
+
+    summary_path = os.path.join(out_folder, "summary_metrics.json")
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=4)
+    print(f"💾 Saved summary metrics: {summary_path}")
 
     if visualize and len(camera_positions) > 0:
         try:

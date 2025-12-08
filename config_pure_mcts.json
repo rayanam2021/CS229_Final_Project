@@ -2,8 +2,8 @@
     "_comment": "Pure MCTS configuration (extends config.json with MCTS-specific output_dir)",
 
     "simulation": {
-        "max_horizon": 5,
-        "num_steps": 2,
+        "max_horizon": 15,
+        "num_steps": 50,
         "time_step": 120.0,
         "verbose": false,
         "visualize": true,
@@ -36,7 +36,7 @@
         "diy": 0.0
     },
     "mcts": {
-        "mcts_iters": 3000,
+        "mcts_iters": 1000,
         "c_puct": 1.4,
         "gamma": 0.99
     }

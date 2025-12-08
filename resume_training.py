@@ -23,8 +23,10 @@ import os
 import sys
 import json
 
-# Try to load thread count from run config, fallback to auto
-omp_threads = 'auto'  # Default: use system auto
+# Try to load thread count from run config, fallback to safe value
+# For old runs without omp_threads_per_worker field, use '2' to prevent OMP warnings
+# Auto threading can cause "fork while parallel region active" warnings with dynamic queue
+omp_threads = '2'  # Safe default: 2 threads per worker (good performance, no warnings)
 try:
     # Check if run_dir argument provided
     if '--run_dir' in sys.argv:
@@ -335,22 +337,12 @@ class ResumeAlphaZeroTrainer(AlphaZeroTrainer):
             successful_episodes = 0  # Track successful episodes in this batch
             oom_errors = 0  # Track OOM errors in this batch
 
-            # Dynamic work queue: workers pull episodes as they become available
-            # This prevents idle workers when some episodes finish faster than others
-            futures = []
-            episodes_submitted = 0
-            episodes_to_submit = len(batch_episodes)
-
+            # Static batch submission: submit all episodes at once
             with ProcessPoolExecutor(max_workers=current_workers) as executor:
-                # Initially submit as many episodes as we have workers (or fewer if batch is small)
-                initial_submit = min(current_workers, episodes_to_submit)
-                for i in range(initial_submit):
-                    ep_num = batch_episodes[i]
-                    global_idx = ep_num - 1  # Convert to 0-indexed
-                    futures.append(
-                        executor.submit(run_episode_worker, global_idx, cfg, current_weights, self.run_dir)
-                    )
-                    episodes_submitted += 1
+                futures = [
+                    executor.submit(run_episode_worker, ep_num - 1, cfg, current_weights, self.run_dir)
+                    for ep_num in batch_episodes
+                ]
 
                 for future in as_completed(futures):
                     try:
@@ -417,16 +409,6 @@ class ResumeAlphaZeroTrainer(AlphaZeroTrainer):
                         episode_cpu_memories.append(res['cpu_memory_peak_mb'])
                         if res['gpu_memory_peak_mb']:
                             episode_gpu_memories.append(res['gpu_memory_peak_mb'])
-
-                        # Dynamic work queue: submit next episode if available
-                        if episodes_submitted < episodes_to_submit:
-                            next_ep_num = batch_episodes[episodes_submitted]
-                            next_idx = next_ep_num - 1  # Convert to 0-indexed
-                            futures.append(
-                                executor.submit(run_episode_worker, next_idx, cfg, current_weights, self.run_dir)
-                            )
-                            episodes_submitted += 1
-                            self.log(f"Worker freed - submitting episode {next_ep_num}")
 
                         # Save visualization if enabled (GPU-ENABLED)
                         if cfg['simulation'].get('visualize', True):
