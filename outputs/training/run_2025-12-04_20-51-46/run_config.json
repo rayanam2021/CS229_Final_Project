@@ -1,6 +1,6 @@
 {
     "simulation": {
-        "max_horizon": 5,
+        "max_horizon": 8,
         "num_steps": 50,
         "time_step": 120.0,
         "verbose": false,
@@ -52,8 +52,8 @@
     },
     "training": {
         "batch_size": 64,
-        "learning_rate": 0.001,
-        "mcts_iters": 100,
+        "learning_rate": 0.0015,
+        "mcts_iters": 80,
         "epochs_per_cycle": 5,
         "buffer_size": 20000,
         "c_puct": 1.4,

@@ -1,0 +1,13 @@
+{
+    "episode": 57,
+    "duration_seconds": 2144.9867448806763,
+    "duration_minutes": 35.749779081344606,
+    "cpu_memory_used_mb": 953.47265625,
+    "cpu_memory_peak_mb": 1510.41796875,
+    "gpu_memory_peak_mb": 1117.48193359375,
+    "initial_entropy": 2262.369384765625,
+    "final_entropy": 163.74749755859375,
+    "entropy_reduction": 2098.6218872070312,
+    "omp_threads_env": "auto",
+    "omp_threads_config": "auto"
+}

@@ -1,0 +1,16 @@
+{
+    "resumed_episodes": 11,
+    "total_duration_seconds": 8660.606485128403,
+    "total_duration_minutes": 144.34344141880672,
+    "total_duration_hours": 2.4057240236467785,
+    "average_episode_duration_seconds": 2148.916946996342,
+    "min_episode_duration_seconds": 1938.244775056839,
+    "max_episode_duration_seconds": 2348.4241890907288,
+    "average_cpu_memory_mb": 1527.200284090909,
+    "peak_cpu_memory_mb": 1871.953125,
+    "average_gpu_memory_mb": 1118.1365411931818,
+    "peak_gpu_memory_mb": 1123.26513671875,
+    "final_workers": 3,
+    "initial_workers": 3,
+    "omp_threads_per_worker": "auto"
+}
