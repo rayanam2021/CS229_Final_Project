@@ -514,15 +514,27 @@ def simulate_observation(grid, rso, camera_fn, servicer_rtn):
                 camera_fn['noise_params']['p_hit_given_empty'],
                 return_tensors=True  # Return GPU tensors for speed
             )
-            # Update belief with GPU tensors directly (no CPU transfer)
+            # CRITICAL FIX: Deduplicate hits and misses before updating grid
+            # Multiple rays can pass through the same voxel, causing duplicates
+            # Without deduplication, the same voxel gets updated multiple times,
+            # driving beliefs to extreme values and artificially lowering entropy
+            if len(hits) > 0:
+                hits = torch.unique(hits, dim=0)
+            if len(misses) > 0:
+                misses = torch.unique(misses, dim=0)
+
+            # Update belief with deduplicated GPU tensors (no CPU transfer)
             grid.update_belief(hits, misses)
             # Only convert to lists for return value if needed by caller
             return hits, misses
         else:
             # Fall back to PyTorch GPU (slower but still GPU-accelerated)
             hits, misses = _trace_rays_gpu_vectorized(ray_origins, ray_dirs, grid, rso, camera_fn['noise_params'])
-            grid.update_belief(list(hits), list(misses))
-            return list(hits), list(misses)
+            # CRITICAL FIX: Deduplicate hits and misses (same issue as CUDA path)
+            hits = list(set(hits))
+            misses = list(set(misses))
+            grid.update_belief(hits, misses)
+            return hits, misses
     else:
         # CPU path - sequential ray tracing (original)
         hits, misses = set(), set()
